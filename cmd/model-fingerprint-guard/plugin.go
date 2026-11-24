@@ -27,6 +27,7 @@ var releaseVersion = "0.1.0-dev"
 type pluginOptions struct {
 	Enabled      bool         `yaml:"enabled"`
 	Priority     int          `yaml:"priority"`
+	Store        yaml.Node    `yaml:"store"`
 	StateDir     string       `yaml:"state-dir"`
 	ReferenceDir string       `yaml:"reference-dir"`
 	Native       bool         `yaml:"native-diagnostics"`

@@ -204,7 +204,7 @@ function renderAuth() {
     models.append(element('span', expected || '—'), element('small', a.last_result?.detected || '—'));
     const status = element('td');
     status.append(element('span', translate(stateName(a)), { class: 'badge ' + stateName(a) }),
-      element('small', (a.policy.enabled ? '检测开启' : '检测关闭') + (a.running ? ' · 检测中' : a.held ? ' · 待人工' : '')));
+      element('small', (a.policy.enabled ? '检测开启' : '检测关闭') + (a.running ? ' · 检测中' : a.held ? ' · 待人工' : !a.probeable ? ' · 诊断不可用' : '')));
     row.append(selector, authName, status, element('td', localTime(a.last_business)),
       element('td', localTime(a.last_check)), models, result, actions);
     target.append(row);
