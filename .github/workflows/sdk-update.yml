@@ -1,0 +1,34 @@
+name: Check lm-detector Go SDK
+
+on:
+  schedule:
+    - cron: '23 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.11'
+      - name: Compare pinned module with available updates
+        shell: bash
+        run: |
+          module=github.com/Ikaleio/lm-detector/sdk/go
+          metadata="$(go list -m -u -json "$module")"
+          current="$(jq -r '.Version' <<< "$metadata")"
+          update="$(jq -r '.Update.Version // empty' <<< "$metadata")"
+          {
+            echo "### lm-detector Go SDK"
+            echo "Pinned: $current"
+            if [[ -n "$update" ]]; then
+              echo "Available: $update. Dependabot is configured to open the dependency pull request."
+            else
+              echo "No newer published module version found."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
