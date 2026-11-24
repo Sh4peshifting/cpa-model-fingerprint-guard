@@ -8,4 +8,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4
 )
 
-require github.com/klauspost/compress v1.18.4 // indirect
+require (
+	github.com/MoeForge/moego v0.1.0-alpha.5 // indirect
+	github.com/klauspost/compress v1.18.4 // indirect
+)
