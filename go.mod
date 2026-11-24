@@ -7,3 +7,5 @@ require (
 	github.com/router-for-me/CLIProxyAPI/v8 v8.1.2
 	go.yaml.in/yaml/v3 v3.0.4
 )
+
+require github.com/klauspost/compress v1.18.4 // indirect
