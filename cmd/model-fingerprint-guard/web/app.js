@@ -238,8 +238,8 @@ function renderHistory() {
     if (![row.name, row.auth_id, row.model, row.expected, row.result.detected, translate(row.action)]
       .join(' ').toLowerCase().includes(query)) continue;
     const tr = element('tr');
-    for (const value of [localTime(row.at), row.name, translate(row.trigger.reason), row.model + '／' + row.expected,
-      row.result.detected || '—', translate(row.result.status), numberText(row.result.score) + '／' + numberText(row.result.probability),
+    for (const value of [localTime(row.at), row.name, translate(row.trigger.reason), row.model + ' / ' + row.expected,
+      row.result.detected || '—', translate(row.result.status), numberText(row.result.score) + ' / ' + numberText(row.result.probability),
       (row.duration_ms / 1000).toFixed(2) + ' 秒', translate(row.action)]) tr.append(element('td', value));
     target.append(tr);
   }
