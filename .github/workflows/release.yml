@@ -83,7 +83,7 @@ jobs:
           - { target: darwin-amd64, runner: macos-15-intel }
           - { target: darwin-arm64, runner: macos-15 }
           - { target: windows-amd64, runner: windows-latest }
-          - { target: windows-arm64, runner: windows-11-arm }
+          - { target: windows-arm64, runner: ubuntu-latest }
           - { target: freebsd-amd64, runner: ubuntu-latest }
     steps:
       - uses: actions/checkout@v6
@@ -114,9 +114,19 @@ jobs:
               test "$(printf "2.17\n%s\n" "$newest" | sort -V | tail -n 1)" = "2.17"
             '
       - name: Build macOS and Windows plugins
-        if: startsWith(matrix.target, 'darwin-') || startsWith(matrix.target, 'windows-')
+        if: startsWith(matrix.target, 'darwin-') || matrix.target == 'windows-amd64'
         shell: bash
         run: ./scripts/build.sh
+      - name: Cross-build Windows ARM64 plugin
+        if: matrix.target == 'windows-arm64'
+        shell: bash
+        run: |
+          root="$(mktemp -d)"
+          toolchain=llvm-mingw-20261117-ucrt-ubuntu-22.04-x86_64
+          curl -fsSL --retry 3 "https://github.com/mstorsjo/llvm-mingw/releases/download/20261117/$toolchain.tar.xz" -o "$root/compiler.tar.xz"
+          printf '%s  %s\n' e7a15a49a2ea95e9f3d8a9d0cfabe5052a4b10fb4777cc54de5a8c27b64bb701 "$root/compiler.tar.xz" | sha256sum -c
+          tar -xf "$root/compiler.tar.xz" -C "$root"
+          GOOS=windows GOARCH=arm64 CC="$root/$toolchain/bin/aarch64-w64-mingw32-clang" ./scripts/build.sh
       - name: Build FreeBSD plugin
         if: matrix.target == 'freebsd-amd64'
         shell: bash
