@@ -96,5 +96,5 @@ try {
 } finally {
   chrome.kill();
   await exit;
-  await rm(profile, { recursive: true, force: true });
+  await rm(profile, { recursive: true, force: true, maxRetries: 6, retryDelay: 100 });
 }
