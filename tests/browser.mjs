@@ -75,6 +75,12 @@ try {
   await emulateTheme('dark');
   await until(() => evaluate('getComputedStyle(document.documentElement).backgroundColor === "rgb(21, 20, 18)"'));
   await emulateTheme('light');
+  await evaluate(`(() => {
+    const overview = document.querySelector('#tab-overview');
+    overview.focus();
+    overview.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  })()`);
+  assert(await evaluate('document.activeElement.id === "tab-auth" && !document.getElementById("auth").hidden'));
   await evaluate('document.querySelector("[data-tab=settings]").click()');
   const configured = await evaluate(`(() => {
     const input = document.querySelector('input[name="history_limit"]');
@@ -89,8 +95,23 @@ try {
   await until(() => evaluate('document.getElementById("notice").textContent.includes("全局设置已应用")'));
   assert.equal(await evaluate(`document.querySelector('input[name="mismatch_recheck_seconds"]').value`), '43200');
   await evaluate('document.querySelector("[data-tab=auth]").click()');
+  assert.equal(await evaluate('document.querySelectorAll("#auth-cards article").length'), 2);
+  await evaluate(`(() => {
+    const search = document.getElementById('auth-search');
+    search.value = 'no-matching-credential';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  assert(await evaluate('!document.getElementById("auth-empty").hidden'));
+  await evaluate('document.querySelector("#auth-empty button").click()');
+  assert.equal(await evaluate('document.querySelectorAll("#auth-cards article").length'), 2);
+  await evaluate('document.querySelector("#auth-cards input[type=checkbox]").click()');
+  assert(await evaluate('!document.getElementById("batch-actions").hidden && document.getElementById("selected-count").textContent === "已选 1 项"'));
+  await evaluate('document.querySelector(\'[data-layout="table"]\').click()');
   assert.equal(await evaluate('document.querySelectorAll("#auth-rows tr").length'), 2);
   assert(await evaluate('document.querySelector("#auth thead").textContent.includes("认证 / 提供商")'));
+  assert(await evaluate('document.querySelector("#auth-rows input[type=checkbox]").checked'));
+  await evaluate('document.getElementById("clear-selection").click()');
+  assert(await evaluate('document.getElementById("batch-actions").hidden'));
   await send('Emulation.setDeviceMetricsOverride', { width: 375, height: 760, deviceScaleFactor: 1, mobile: true });
   assert(await evaluate(`(() => {
     const table = document.querySelector('#auth .table-wrap');
