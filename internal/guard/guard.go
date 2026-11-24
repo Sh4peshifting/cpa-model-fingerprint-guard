@@ -18,8 +18,9 @@ type job struct {
 }
 
 type requestActivity struct {
-	auths map[string]struct{}
-	done  time.Time
+	auths  map[string]struct{}
+	failed map[string]struct{}
+	done   time.Time
 }
 
 type failureWindow struct {
@@ -29,28 +30,29 @@ type failureWindow struct {
 }
 
 type Guard struct {
-	mu         sync.Mutex
-	wg         sync.WaitGroup
-	host       Host
-	detector   Detector
-	path       string
-	now        func() time.Time
-	jitter     func(int) time.Duration
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wake       chan struct{}
-	state      state
-	inventory  map[string]Auth
-	active     map[string]int
-	requests   map[string]*requestActivity
-	failures   map[string]failureWindow
-	running    map[string]*job
-	pauses     map[string]time.Time
-	overloads  map[string]int
-	nextScan   time.Time
-	dirty      bool
-	storageErr bool
-	listErr    bool
+	mu           sync.Mutex
+	wg           sync.WaitGroup
+	host         Host
+	detector     Detector
+	path         string
+	now          func() time.Time
+	jitter       func(int) time.Duration
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wake         chan struct{}
+	state        state
+	inventory    map[string]Auth
+	active       map[string]int
+	requests     map[string]*requestActivity
+	correlations map[string]*requestActivity
+	failures     map[string]failureWindow
+	running      map[string]*job
+	pauses       map[string]time.Time
+	overloads    map[string]int
+	nextScan     time.Time
+	dirty        bool
+	storageErr   bool
+	listErr      bool
 }
 
 func Open(path string, initial Config, host Host, detector Detector) (*Guard, error) {
@@ -63,12 +65,17 @@ func Open(path string, initial Config, host Host, detector Detector) (*Guard, er
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	watchUntil := time.Now().UTC().Add(seconds(state.Config.IdleSeconds))
+	for _, a := range state.Auths {
+		a.WatchUntil = watchUntil
+	}
 	return &Guard{
 		host: host, detector: detector, path: path, now: time.Now, jitter: randomDelay,
 		ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1), state: state,
 		inventory: map[string]Auth{}, active: map[string]int{}, requests: map[string]*requestActivity{},
 		failures: map[string]failureWindow{}, running: map[string]*job{},
-		pauses: map[string]time.Time{}, overloads: map[string]int{},
+		correlations: map[string]*requestActivity{},
+		pauses:       map[string]time.Time{}, overloads: map[string]int{},
 	}, nil
 }
 
@@ -118,10 +125,13 @@ func (g *Guard) Isolated(id string) bool {
 // Begin returns false when the selected credential must be skipped. One request
 // can attempt several credentials, so all observed IDs remain active until its
 // terminal event arrives.
-func (g *Guard) Begin(request, id string) bool {
+func (g *Guard) Begin(request, id string, correlations ...string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	s := g.state.Auths[id]
+	if g.ctx.Err() != nil {
+		return true
+	}
 	if s != nil && s.Isolated {
 		return false
 	}
@@ -132,6 +142,11 @@ func (g *Guard) Begin(request, id string) bool {
 	if r == nil {
 		r = &requestActivity{auths: map[string]struct{}{}}
 		g.requests[request] = r
+	}
+	for _, correlation := range correlations {
+		if correlation != "" {
+			g.correlations[correlation] = r
+		}
 	}
 	if _, seen := r.auths[id]; seen {
 		return true
@@ -146,6 +161,19 @@ func (g *Guard) Begin(request, id string) bool {
 		j.cancel()
 	}
 	return true
+}
+
+// SingleAuth returns the only credential observed after selection for this execution.
+func (g *Guard) SingleAuth(request string) string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	r := g.requests[request]
+	if r != nil && len(r.auths) == 1 {
+		for id := range r.auths {
+			return id
+		}
+	}
+	return ""
 }
 
 func (g *Guard) Complete(request string) {
@@ -256,6 +284,11 @@ func (g *Guard) reconcile(now time.Time, auths []Auth) {
 	for id, r := range g.requests {
 		if !r.done.IsZero() && now.Sub(r.done) > 10*time.Minute {
 			delete(g.requests, id)
+		}
+	}
+	for key, r := range g.correlations {
+		if !r.done.IsZero() && now.Sub(r.done) > 10*time.Minute {
+			delete(g.correlations, key)
 		}
 	}
 	for id, window := range g.failures {

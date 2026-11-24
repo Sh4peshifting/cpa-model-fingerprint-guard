@@ -9,13 +9,21 @@ import (
 
 var errorCode = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,79}$`)
 
-func (g *Guard) Observe(request, id, model string, status int, code, text string) {
+func (g *Guard) Observe(request, id, model string, status int, code, text string, correlations ...string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
 	// Only post-selection business attempts supply this correlation. This also
 	// discards usage reports from the plugin's own internal host calls.
+	if g.ctx.Err() != nil {
+		return
+	}
 	r := g.requests[request]
+	for _, key := range correlations {
+		if r == nil {
+			r = g.correlations[key]
+		}
+	}
 	if r == nil {
 		return
 	}
@@ -36,6 +44,13 @@ func (g *Guard) Observe(request, id, model string, status int, code, text string
 	if reason == "" {
 		return
 	}
+	if _, seen := r.failed[id]; seen {
+		return
+	}
+	if r.failed == nil {
+		r.failed = map[string]struct{}{}
+	}
+	r.failed[id] = struct{}{}
 	now := g.now().UTC()
 	window := g.failures[id]
 	if !window.last.IsZero() && now.Sub(window.last) < seconds(cfg.DedupeSeconds) {

@@ -42,7 +42,7 @@ func (o *Observer) Pick(req pluginapi.SchedulerPickRequest) pluginapi.SchedulerP
 
 func (o *Observer) AfterAuth(r pluginapi.RequestInterceptRequest) pluginapi.RequestInterceptResponse {
 	id := stringMeta(r.Metadata, "selected_auth_id")
-	if !o.Host.ownProbe(r.Metadata, r.Headers) && !o.Guard.Begin(r.RequestID, id) {
+	if !o.Host.ownProbe(r.Metadata, r.Headers) && !o.Guard.Begin(r.RequestID, id, correlation("selection", stringMeta(r.Metadata, "selection_id"), id), correlation("trace", r.TraceID, id)) {
 		return pluginapi.RequestInterceptResponse{
 			Terminate: true, TerminateScope: "credential", StatusCode: http.StatusServiceUnavailable,
 			ResponseHeaders: http.Header{"Content-Type": []string{"application/json"}},
@@ -67,12 +67,26 @@ func (o *Observer) Usage(r pluginapi.UsageRecord) {
 	if code == "model_fingerprint_quarantine" {
 		return
 	}
-	o.Guard.Observe(r.RequestID, r.AuthID, r.Alias, r.Failure.StatusCode, code, text)
+	o.Guard.Observe(r.RequestID, r.AuthID, r.Alias, r.Failure.StatusCode, code, text,
+		correlation("selection", r.SelectionID, r.AuthID), correlation("trace", r.TraceID, r.AuthID))
+}
+
+func correlation(kind, id, auth string) string {
+	if id == "" || auth == "" {
+		return ""
+	}
+	return kind + "\x00" + id + "\x00" + auth
 }
 
 func (o *Observer) Chunk(r pluginapi.StreamChunkInterceptRequest) {
+	if r.RequestID == "" || r.ChunkIndex < 0 || len(r.Body) == 0 {
+		return
+	}
 	id := stringMeta(r.Metadata, "selected_auth_id")
-	if id == "" || r.RequestID == "" || r.ChunkIndex < 0 || len(r.Body) == 0 {
+	if id == "" {
+		id = o.Guard.SingleAuth(r.RequestID)
+	}
+	if id == "" {
 		return
 	}
 	o.mu.Lock()
@@ -83,6 +97,9 @@ func (o *Observer) Chunk(r pluginapi.StreamChunkInterceptRequest) {
 		o.parts[r.RequestID] = part
 	}
 	part.feed(r.Body, func(status int, code, text string) {
+		if status == 0 {
+			status = http.StatusOK
+		}
 		o.Guard.Observe(r.RequestID, id, r.RequestedModel, status, code, text)
 	})
 	if len(part.pending) == 0 && part.event == "" {
@@ -102,10 +119,11 @@ func (b *eventBuffer) feed(data []byte, emit func(int, string, string)) {
 		line, rest, hasNewline := bytes.Cut(b.pending, []byte{'\n'})
 		line = bytes.TrimSpace(line)
 		if v, ok := bytes.CutPrefix(line, []byte("event:")); ok {
-			if !hasNewline {
+			name := string(bytes.TrimSpace(v))
+			if !hasNewline && name != "error" && strings.HasPrefix("error", name) {
 				return
 			}
-			b.event = string(bytes.TrimSpace(v))
+			b.event = name
 		} else if payload, ok := bytes.CutPrefix(line, []byte("data:")); ok || bytes.HasPrefix(line, []byte("{")) {
 			if !ok {
 				payload = line

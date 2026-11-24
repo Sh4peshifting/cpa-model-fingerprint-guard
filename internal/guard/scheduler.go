@@ -16,16 +16,12 @@ func (g *Guard) schedule(now time.Time, scan bool) {
 	for id, a := range g.inventory {
 		s := g.state.Auths[id]
 		p := cfg.Policy(id, a.Provider)
-		if s.Isolated && !s.Held && !s.Trigger.At.IsZero() && now.Sub(s.Trigger.At) >= seconds(cfg.MaxIsolation) {
-			if cfg.Expiry == "release" && s.Abnormal == nil {
-				g.release(s)
-			} else {
-				s.Held, s.Pending, s.Due = true, "", time.Time{}
-				if j := g.running[id]; j != nil {
-					j.cancel()
-				}
+		if s.Isolated && !s.Trigger.At.IsZero() && now.Sub(s.Trigger.At) >= seconds(cfg.MaxIsolation) {
+			if cfg.Expiry == "release" && s.Abnormal == nil && s.Trigger.Reason != "manual" {
+				g.expire(id, s, true)
+			} else if !s.Held {
+				g.expire(id, s, false)
 			}
-			g.dirty = true
 		}
 		if !p.Enabled || a.Disabled || g.listErr || g.running[id] != nil {
 			continue
@@ -200,13 +196,14 @@ func (g *Guard) applyResult(ctx context.Context, now time.Time, j *job, s *AuthS
 		if g.save() != nil {
 			return "persistence_failed"
 		}
-		abnormal.DisabledAt, abnormal.PluginDisabled = now, true
+		disabled := abnormal
+		disabled.DisabledAt, disabled.PluginDisabled = now, true
 		writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		if err := g.host.Disable(writeCtx, j.Auth, abnormal); err != nil {
+		if err := g.host.Disable(writeCtx, j.Auth, disabled); err != nil {
 			return "host_write_failed"
 		}
-		s.Abnormal = &abnormal
+		s.Abnormal = &disabled
 		auth := g.inventory[j.ID]
 		auth.Disabled = true
 		g.inventory[j.ID] = auth
@@ -251,6 +248,18 @@ func (g *Guard) recordOverload(now time.Time, provider string, overload bool) {
 			g.overloads[key] = 0
 		}
 	}
+}
+
+func (g *Guard) expire(id string, s *AuthState, release bool) {
+	if j := g.running[id]; j != nil {
+		j.cancel()
+	}
+	if release {
+		g.release(s)
+	} else {
+		s.Held, s.Pending, s.Due = true, "", time.Time{}
+	}
+	g.dirty = true
 }
 
 func (g *Guard) release(s *AuthState) {

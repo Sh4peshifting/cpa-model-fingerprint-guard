@@ -158,3 +158,54 @@ func TestTriggers(t *testing.T) {
 		}
 	}
 }
+
+func TestMatchedProbeReleasesOnlyPluginQuarantine(t *testing.T) {
+	g, h, d, _ := setupGuard(t, Match, false)
+	h.auths[0].Cooling = true
+	g.reconcile(g.now(), h.auths)
+	g.Begin("business-a", "a", "selection-a")
+	g.Observe("distinct-executor-id", "a", "fixture", 502, "", "", "selection-a")
+	g.step()
+	nextProbe(t, d)
+	close(d.done)
+	g.wg.Wait()
+	view := g.View()
+	if view.Auths[0].Isolated || !view.Auths[0].Cooling || view.History[0].Action != "matched" {
+		t.Fatalf("match did not preserve host cooling: %+v", view.Auths[0])
+	}
+}
+
+func TestEscalationRequiresDistinctBusinessRequests(t *testing.T) {
+	g, _, _, _ := setupGuard(t, Transient, false)
+	g.state.Config.TriggerCount, g.state.Config.DedupeSeconds = 2, 0
+	g.Begin("one", "a")
+	g.Observe("one", "a", "fixture", 503, "", "")
+	g.Observe("one", "a", "fixture", 200, "server_is_overloaded", "")
+	if g.Isolated("a") {
+		t.Fatal("duplicate delivery counted as another business event")
+	}
+	g.Begin("two", "a")
+	g.Observe("two", "a", "fixture", 503, "", "")
+	if !g.Isolated("a") {
+		t.Fatal("two independent failures did not meet the threshold")
+	}
+}
+
+func TestExplicitReleaseExpiryAfterRetryExhaustion(t *testing.T) {
+	g, _, d, now := setupGuard(t, Transient, false)
+	g.state.Config.Expiry, g.state.Config.MaxRetries, g.state.Config.MaxIsolation = "release", 0, 30
+	g.Begin("business", "a")
+	g.Observe("business", "a", "fixture", 502, "", "")
+	g.step()
+	nextProbe(t, d)
+	close(d.done)
+	g.wg.Wait()
+	if !g.View().Auths[0].Held {
+		t.Fatal("expected hold while quarantine has not expired")
+	}
+	*now = now.Add(31 * time.Second)
+	g.step()
+	if g.Isolated("a") {
+		t.Fatal("explicit release policy did not take effect")
+	}
+}

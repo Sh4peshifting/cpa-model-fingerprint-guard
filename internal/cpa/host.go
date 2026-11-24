@@ -80,7 +80,7 @@ func nativeFormat(provider, kind string) string {
 		return "openai-response"
 	case "claude":
 		return "claude"
-	case "gemini-cli":
+	case "gemini-cli", "kimi", "kimi-ai":
 		return "openai"
 	default:
 		return ""
