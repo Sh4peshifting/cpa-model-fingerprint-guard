@@ -1,0 +1,9 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-name: github.com/Ikaleio/lm-detector/sdk/go
+    open-pull-requests-limit: 1

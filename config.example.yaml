@@ -1,0 +1,55 @@
+# 将 plugins 段合并到 CLIProxyAPI 的配置。宿主的 management.secret-key 需已配置。
+plugins:
+  enabled: true
+  dir: "plugins"
+  configs:
+    model-fingerprint-guard:
+      enabled: true
+      priority: 100
+      # 改为该宿主实例专用的绝对路径。备份此目录以保留隔离和记录。
+      state-dir: ".model-fingerprint-guard"
+      # 仅在本机、使用已核对的原生 OAuth 路由且未配置改写模型或执行器的插件时开启。
+      native-diagnostics: false
+      # 启动后在后台更新公开参考库，失败时保留当前版本。
+      reference-auto-update: true
+      reference-refresh-interval: 24h
+      # 设置本地目录时固定使用该参考库，并关闭网络更新。
+      # reference-dir: "/path/to/pinned/lm-detector/data"
+      settings:
+        enabled: false
+        default:
+          enabled: true
+          idle: true
+          trigger: true
+          model: ""
+          expected: ""
+        providers:
+          kimi:
+            model: "kimi-k3"
+            expected: "kimi-k3"
+        auths: {}
+        expected_models: {}
+        prefer_failed_model: true
+        scan_seconds: 60
+        idle_seconds: 1800
+        interval_seconds: 21600
+        timeout_seconds: 90
+        jitter_seconds: 10
+        dedupe_seconds: 10
+        trigger_count: 1
+        http_statuses: [502, 503]
+        error_codes: ["server_is_overloaded"]
+        error_texts: ["Our servers are currently overloaded. Please try again later."]
+        min_probability: 0.9
+        confirm_rounds: 2
+        auto_disable: true
+        max_concurrent: 2
+        per_provider: 1
+        retry_seconds: 60
+        max_retry_seconds: 900
+        max_retries: 5
+        max_isolation_seconds: 7200
+        expiry: hold
+        overload_limit: 3
+        overload_pause_seconds: 120
+        history_limit: 500

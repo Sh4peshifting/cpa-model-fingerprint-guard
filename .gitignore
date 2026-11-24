@@ -1,0 +1,16 @@
+/dist/
+/work/
+/internal/fingerprint/reference/
+*.so
+*.dylib
+*.dll
+*.log
+*.db
+.env*
+auths/
+node_modules/
+/.model-fingerprint-guard/
+/config.yaml
+*.pem
+*.key
+__pycache__/

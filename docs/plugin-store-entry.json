@@ -1,0 +1,15 @@
+{
+  "id": "model-fingerprint-guard",
+  "name": "Model Fingerprint Guard",
+  "description": "Runs locally scored lm-detector challenges against selected OAuth credentials, tracks model mismatches and temporarily quarantines unhealthy credentials.",
+  "author": "bul1horn",
+  "repository": "https://github.com/bul1horn/cpa-model-fingerprint-guard",
+  "homepage": "https://github.com/bul1horn/cpa-model-fingerprint-guard",
+  "license": "MIT",
+  "tags": ["Management", "Scheduler"],
+  "locales": {
+    "zh-CN": {
+      "description": "使用 lm-detector 在本地评分，检测指定 OAuth 认证的模型指纹，记录不一致结果并临时隔离异常认证。"
+    }
+  }
+}
