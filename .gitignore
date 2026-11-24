@@ -9,3 +9,8 @@
 .env*
 auths/
 node_modules/
+/.model-fingerprint-guard/
+/config.yaml
+*.pem
+*.key
+__pycache__/
