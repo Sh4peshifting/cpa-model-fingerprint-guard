@@ -72,12 +72,16 @@ try {
   await evaluate('document.querySelector("[data-tab=settings]").click()');
   const configured = await evaluate(`(() => {
     const input = document.querySelector('input[name="history_limit"]');
+    const interval = document.querySelector('input[name="mismatch_recheck_seconds"]');
+    if (interval?.value !== '172800') return false;
     input.value = 42;
+    interval.value = 43200;
     document.getElementById('settings-form').requestSubmit();
     return !!input;
   })()`);
   assert(configured);
   await until(() => evaluate('document.getElementById("notice").textContent.includes("全局设置已应用")'));
+  assert.equal(await evaluate(`document.querySelector('input[name="mismatch_recheck_seconds"]').value`), '43200');
   await evaluate('document.querySelector("[data-tab=auth]").click()');
   assert.equal(await evaluate('document.querySelectorAll("#auth-rows tr").length'), 2);
   await evaluate(`(() => {

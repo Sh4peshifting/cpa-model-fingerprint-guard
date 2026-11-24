@@ -7,6 +7,7 @@ const translations = {
   match: '匹配', mismatch: '不一致', inconclusive: '证据不足', transient: '暂时失败',
   unsupported: '不支持', cancelled: '已取消', error: '上游异常', manual: '手动操作',
   idle: '空闲检测', confirm: '复核', http_status: 'HTTP 状态', error_code: '错误代码',
+  recheck: '隔离后自动复检', recheck_kept_isolated: '复检未通过，保持隔离',
   error_text: '错误文本', matched: '匹配，解除插件隔离', recorded: '已记录',
   confirm_again: '等待复核', different_model: '测试模型与异常模型不同，等待人工',
   held_by_policy: '保持隔离', host_mutation_unavailable: '保持隔离，宿主写入接口不可用',
@@ -127,7 +128,7 @@ function render() {
     '检测中': auths.filter(a => a.running).length,
     '插件停用': auths.filter(a => a.abnormal?.plugin_disabled && a.disabled).length,
     '待检测': auths.filter(a => a.pending && !a.running).length,
-    '待人工处理': auths.filter(a => a.held && !a.disabled).length,
+    '待人工处理': auths.filter(a => a.held && !a.disabled && !a.next_recheck).length,
   };
   byId('metrics').replaceChildren(...Object.entries(metrics).map(([label, value]) => {
     const card = element('div', null, { class: 'metric' });
@@ -193,6 +194,7 @@ function renderAuth() {
     result.append(element('span', translate(a.last_result?.status)));
     if (a.trigger?.at) result.append(element('small', translate(a.trigger.reason) + ' · ' + localTime(a.trigger.at)));
     if (a.abnormal?.confirmed_at) result.append(element('small', '确认 ' + localTime(a.abnormal.confirmed_at)));
+    if (a.next_recheck && !a.running) result.append(element('small', '下次复检 ' + localTime(a.next_recheck)));
     const actions = element('td', null, { class: 'row-actions' });
     actions.append(
       actionButton('设置', () => editAuth(a)),
@@ -208,8 +210,9 @@ function renderAuth() {
     const expected = a.last_expected || a.policy.expected || view.config.expected_models?.[a.policy.model] || a.policy.model;
     models.append(element('span', expected || '—'), element('small', a.last_result?.detected || '—'));
     const status = element('td');
+    const heldLabel = a.next_recheck ? ' · 待复检' : ' · 待人工';
     status.append(element('span', translate(stateName(a)), { class: 'badge ' + stateName(a) }),
-      element('small', (a.policy.enabled ? '检测开启' : '检测关闭') + (a.running ? ' · 检测中' : a.held ? ' · 待人工' : !a.probeable ? ' · 诊断不可用' : '')));
+      element('small', (a.policy.enabled ? '检测开启' : '检测关闭') + (a.running ? ' · 检测中' : a.held ? heldLabel : !a.probeable ? ' · 诊断不可用' : '')));
     row.append(selector, authName, status, element('td', localTime(a.last_business)),
       element('td', localTime(a.last_check)), models, result, actions);
     target.append(row);
@@ -282,7 +285,8 @@ const policyFields = {
 const settingsFields = {
   enabled: ['全局检测', 'bool'], prefer_failed_model: ['优先检测已映射的异常模型', 'bool'],
   scan_seconds: ['扫描周期（秒）', 'number'], idle_seconds: ['空闲阈值（秒）', 'number'],
-  interval_seconds: ['最短检测间隔（秒）', 'number'], timeout_seconds: ['单次挑战超时（秒）', 'number'],
+  interval_seconds: ['最短检测间隔（秒）', 'number'], mismatch_recheck_seconds: ['不一致复检间隔（秒）', 'number'],
+  timeout_seconds: ['单次挑战超时（秒）', 'number'],
   jitter_seconds: ['最大抖动（秒）', 'number'], dedupe_seconds: ['事件去重窗口（秒）', 'number'],
   trigger_count: ['触发事件数量', 'number'], http_statuses: ['HTTP 错误状态码', 'json'],
   error_codes: ['结构化错误代码', 'json'], error_texts: ['错误文本片段', 'json'],
