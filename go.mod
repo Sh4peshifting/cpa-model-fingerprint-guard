@@ -9,4 +9,8 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4
 )
 
-require github.com/MoeForge/moego v0.1.0-alpha.5 // indirect
+require (
+	github.com/MoeForge/moego v0.1.0-alpha.5 // indirect
+	github.com/sirupsen/logrus v1.9.3 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+)

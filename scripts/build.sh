@@ -5,7 +5,7 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
 revision=e0472890bea827d15ca883636a77d4c10bbe843b
-version="${MFG_VERSION:-0.1.0-dev}"
+version="${MFG_VERSION:-$(cat VERSION)-dev}"
 target_os="$(go env GOOS)"
 target_arch="$(go env GOARCH)"
 case "$target_os" in

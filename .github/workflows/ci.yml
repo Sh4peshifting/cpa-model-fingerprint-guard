@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
+    branches-ignore: [master]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -29,7 +31,7 @@ jobs:
         env:
           MFG_TEST_REFERENCE: /tmp/lm-detector/data
         run: |
-          test -z "$(gofmt -l cmd internal)"
+          test -z "$(gofmt -l cmd internal tests)"
           go test ./...
           go vet ./...
           go test -race ./...
@@ -42,6 +44,5 @@ jobs:
           MFG_CHROMIUM: google-chrome
         run: |
           (cd /tmp/cliproxyapi && CGO_ENABLED=1 go build -o /tmp/cli-proxy-api ./cmd/server)
-          ./scripts/build.sh
-          python3 tests/host_integration.py --host /tmp/cli-proxy-api \
-            --plugin dist/linux-amd64/model-fingerprint-guard-v0.1.0-dev.so --browser-test
+          artifact="$(./scripts/build.sh)"
+          python3 tests/host_integration.py --host /tmp/cli-proxy-api --plugin "$artifact" --browser-test

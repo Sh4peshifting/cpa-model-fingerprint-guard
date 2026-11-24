@@ -26,7 +26,7 @@
 
 ## 安装与使用
 
-1. 使用支持原生插件的 CLIProxyAPI v8.1.2 发行版。复制匹配当前操作系统和架构的动态库到宿主的 `plugins.dir`。保留文件名中的 `model-fingerprint-guard` ID。
+1. 使用支持原生插件的 CLIProxyAPI v8.1.2 发行版。从本仓库 Releases 下载并解压对应平台的 ZIP，或使用本地构建产物。复制动态库到宿主的 `plugins.dir`。保留文件名中的 `model-fingerprint-guard` ID。
 2. 将 [示例配置](config.example.yaml) 的 `plugins` 段合并到宿主 YAML。为该宿主实例设置唯一的 `state-dir`，并通过宿主配置管理密钥和远程访问策略。
 3. 启动或重启宿主。在官方管理面板的插件资源菜单打开“模型指纹守卫”。也可直接访问 `/v0/resource/plugins/model-fingerprint-guard/index.html`。填写宿主管理密钥后进入页面，密钥只保留在当前页面内存中。
 4. 为要检测的提供商或认证配置请求模型、预期模型，然后开启全局检测。原版宿主的 `native-diagnostics: true` 仅适用于经过核对的原生 OAuth 路由。要求稳定别名映射、禁用会改变诊断路由或模型的其他插件或规则。以 [兼容性说明](docs/compatibility.md) 为准。
@@ -54,6 +54,14 @@
 发布版启动时先加载经过校验的本地缓存或随包参考库，再在后台通过 HTTPS 检查 lm-detector 的公开数据源。仅下载新版公开模型清单和检测器分片。启用前核对数据格式、文件大小、SHA-256 和 Go SDK 加载结果。网络异常、格式不兼容或缓存在写入时失败都会保留当前版本。每轮检测只读取启动时选用的参考库，切换版本后重新计数连续不一致轮数。
 
 默认启动后检查一次，随后每 24 小时检查。可在宿主插件配置中设置 `reference-refresh-interval`，范围为 `1m` 到 `720h`。设置 `reference-auto-update: false` 可使用发布版内嵌数据。指定 `reference-dir` 时始终使用该本地目录。更改这些宿主配置后请重启 CLIProxyAPI。当前构建时间和最近更新状态可在管理页查看。缓存位于 `state-dir/reference-cache.json`。
+
+## 发布与官方插件源
+
+发布版本记录在 `VERSION`。提交到默认分支 `master` 后，如果该版本尚未发布，GitHub Actions 会先运行 CI，再构建所有平台。验证 ZIP、SHA-256 和 CLIProxyAPI 的实际安装逻辑后，自动创建形如 `v0.1.0` 的标签和 GitHub Release。已发布的版本会跳过重复发布。标签推送也可触发发布，标签版本须与 `VERSION` 一致。
+
+各平台的资产名为 `model-fingerprint-guard_<version>_<goos>_<goarch>.zip`。每个 ZIP 含一个位于根目录的 `model-fingerprint-guard.so`、`.dylib` 或 `.dll`，并附带许可证和文档。统一的 `checksums.txt` 包含所有 ZIP 的 SHA-256。收录准备材料见 [官方插件源提交说明](docs/plugin-store.md)。
+
+GitHub Actions 每周查询 lm-detector Go SDK 的更新，Dependabot 负责发起只更新该 SDK 的依赖 PR。合并后，下一个发布版本使用更新后的 `go.mod` 和 `go.sum`。CI 会检查 Go SDK 与随包参考库的兼容性。运行时数据更新与 SDK 发版独立。
 
 ## 升级、卸载与排查
 
