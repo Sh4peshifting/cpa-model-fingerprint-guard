@@ -2,6 +2,35 @@
 
 const apiBase = '/v0/management/model-fingerprint-guard';
 const byId = id => document.getElementById(id);
+
+function initializeTheme() {
+  const root = document.documentElement;
+  let panelRoot;
+  try {
+    if (window.parent !== window) panelRoot = window.parent.document.documentElement;
+  } catch {
+    // A panel on another origin cannot share its theme through the DOM.
+  }
+  if (panelRoot) {
+    const sync = () => {
+      const theme = panelRoot.dataset.theme;
+      root.dataset.theme = theme === 'white' || theme === 'dark' ? theme : 'light';
+    };
+    const observer = new MutationObserver(sync);
+    observer.observe(panelRoot, { attributes: true, attributeFilter: ['data-theme'] });
+    window.addEventListener('pagehide', event => {
+      if (!event.persisted) observer.disconnect();
+    });
+    sync();
+    return;
+  }
+  const preference = window.matchMedia('(prefers-color-scheme: dark)');
+  const sync = () => { root.dataset.theme = preference.matches ? 'dark' : 'light'; };
+  preference.addEventListener('change', sync);
+  sync();
+}
+initializeTheme();
+
 const translations = {
   normal: '正常', isolated: '隔离', cooling: '宿主冷却', disabled: '已停用',
   match: '匹配', mismatch: '不一致', inconclusive: '证据不足', transient: '暂时失败',

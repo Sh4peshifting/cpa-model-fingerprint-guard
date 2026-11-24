@@ -27,41 +27,46 @@
     <p id="health" class="health"></p>
     <section id="overview" aria-label="运行概览">
       <div id="metrics"></div>
-      <h2>最近异常</h2><div id="recent" class="panel"></div>
+      <div class="panel">
+        <h2>最近异常</h2>
+        <div id="recent"></div>
+      </div>
     </section>
-    <section id="auth" aria-label="认证管理" hidden>
+    <section id="auth" class="panel" aria-label="认证管理" hidden>
       <div class="toolbar">
         <label>搜索认证<input id="auth-search" type="search" placeholder="文件名、提供商或模型"></label>
         <label>调度状态<select id="auth-filter"><option value="">全部</option><option value="normal">正常</option><option value="isolated">隔离</option><option value="disabled">停用</option><option value="cooling">宿主冷却</option></select></label>
-        <button type="button" id="batch-on">批量启用</button>
-        <button type="button" id="batch-off">批量关闭</button>
-        <button type="button" id="batch-check">批量检测</button>
+        <div class="batch-actions">
+          <button type="button" id="batch-on">批量启用</button>
+          <button type="button" id="batch-off">批量关闭</button>
+          <button type="button" id="batch-check">批量检测</button>
+        </div>
       </div>
-      <div class="table-wrap"><table>
+      <div class="table-wrap" role="region" aria-label="认证列表" tabindex="0"><table>
         <thead><tr><th><input type="checkbox" id="select-visible" aria-label="选择筛选结果"></th><th>认证 / 提供商</th><th>检测 / 调度</th><th>最后业务</th><th>最后检测</th><th>预期 / 检测模型</th><th>结果 / 隔离</th><th>操作</th></tr></thead>
         <tbody id="auth-rows"></tbody>
       </table></div>
     </section>
     <section id="settings" aria-label="检测设置" hidden>
-      <form id="settings-form">
+      <form id="settings-form" class="panel">
         <p>单认证设置优先于提供商设置。全局关闭会停止创建检测任务。</p>
         <div id="settings-fields" class="fields"></div>
         <div class="toolbar"><button class="primary">保存并应用</button><button id="reload-settings" type="button">重新载入</button></div>
       </form>
     </section>
-    <section id="history" aria-label="检测记录" hidden>
+    <section id="history" class="panel" aria-label="检测记录" hidden>
       <div class="toolbar">
         <label>搜索记录<input id="history-search" type="search" placeholder="认证、模型或处理结果"></label>
         <label>检测结果<select id="history-filter"><option value="">全部</option><option value="match">匹配</option><option value="mismatch">不一致</option><option value="transient">暂时失败</option><option value="inconclusive">证据不足</option><option value="unsupported">不支持</option></select></label>
       </div>
-      <div class="table-wrap"><table>
+      <div class="table-wrap" role="region" aria-label="检测记录列表" tabindex="0"><table>
         <thead><tr><th>检测时间</th><th>认证文件</th><th>触发原因</th><th>测试 / 预期模型</th><th>检测模型</th><th>结果</th><th>排名分数 / 概率</th><th>耗时</th><th>处理结果</th></tr></thead>
         <tbody id="history-rows"></tbody>
       </table></div>
     </section>
   </div>
 </main>
-<dialog id="auth-dialog">
+<dialog id="auth-dialog" aria-labelledby="auth-name">
   <form id="auth-form">
     <h2 id="auth-name"></h2>
     <div class="fields" id="auth-fields"></div>
