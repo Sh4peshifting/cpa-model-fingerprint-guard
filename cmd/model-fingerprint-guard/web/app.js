@@ -50,10 +50,13 @@ const numberText = value => value == null ? '—' : value.toFixed(3);
 let key = '';
 let view = null;
 let settingsRevision = 0;
+let settingsBaseline = null;
 let editing = null;
 const selected = new Set();
 let authLayout = 'cards';
-let refreshInProgress = false;
+let refreshRequest = null;
+let busy = false;
+const maxBatchSize = 250;
 let session = 0;
 let lastRender = '';
 
@@ -66,8 +69,8 @@ function element(tag, text, attributes = {}) {
 function message(text, bad = false) {
   const node = byId('notice');
   node.hidden = !text;
-  node.className = bad ? 'error' : '';
-  node.textContent = text;
+  node.classList.toggle('error', bad);
+  if (node.textContent !== text) node.textContent = text;
 }
 async function api(path, method = 'GET', body) {
   const headers = { Authorization: 'Bearer ' + key };
@@ -82,12 +85,11 @@ async function api(path, method = 'GET', body) {
   if (!response.ok) throw new Error(data.error || '管理接口请求失败。');
   return data;
 }
-async function refresh() {
-  if (!key || refreshInProgress) return;
-  refreshInProgress = true;
+function refresh() {
+  if (!key) return Promise.resolve();
+  if (refreshRequest) return refreshRequest;
   const requestedSession = session;
-  try {
-    const next = await api('/state');
+  const request = api('/state').then(next => {
     if (requestedSession !== session) return;
     const serialized = JSON.stringify(next);
     view = next;
@@ -98,41 +100,72 @@ async function refresh() {
       lastRender = serialized;
       render();
     }
-  } finally {
-    refreshInProgress = false;
-  }
+    if (!busy && settingsBaseline !== null && settingsRevision !== view.revision && !settingsDirty()) drawSettings();
+    else updateSettingsState();
+  }).finally(() => {
+    if (refreshRequest === request) refreshRequest = null;
+  });
+  refreshRequest = request;
+  return request;
+}
+async function refreshLatest(requestedSession) {
+  await refreshRequest?.catch(() => {});
+  if (requestedSession === session) await refresh();
 }
 byId('login').addEventListener('submit', async event => {
   event.preventDefault();
+  const button = byId('connect');
+  if (button.disabled) return;
   key = byId('key').value.trim();
   byId('key').value = '';
-  message('正在连接…');
+  if (!key) return message('请输入管理密钥。', true);
+  button.disabled = true;
+  button.textContent = '正在连接…';
+  message('');
   try {
     await refresh();
     drawSettings();
-    message('');
+    byId('tab-overview').focus();
   } catch (error) {
     key = '';
     message(error.message, true);
+    byId('key').focus();
+  } finally {
+    button.disabled = false;
+    button.textContent = '连接管理接口';
   }
 });
 byId('logout').onclick = () => {
   session++;
+  refreshRequest = null;
+  busy = false;
   key = '';
   view = null;
+  settingsBaseline = null;
   selected.clear();
   lastRender = '';
   byId('workspace').hidden = true;
   byId('session-actions').hidden = true;
   byId('login').hidden = false;
+  editing = null;
   byId('auth-dialog').close();
-  for (const id of ['auth-cards', 'auth-rows', 'history-rows', 'recent', 'settings-fields', 'metrics', 'auth-fields']) {
+  closeConfirmation(false);
+  for (const id of ['auth-cards', 'auth-rows', 'history-rows', 'recent', 'settings-fields',
+    'metrics', 'auth-fields', 'auth-name', 'confirm-title', 'confirm-detail', 'health', 'reference-models']) {
     byId(id).replaceChildren();
   }
+  formError('auth-error');
+  formError('settings-error');
+  for (const id of ['auth-search', 'auth-filter', 'history-search', 'history-filter']) byId(id).value = '';
+  openTab(byId('tab-overview'));
+  syncWriteControls();
   message('');
+  byId('key').focus();
 };
 window.setInterval(() => {
-  if (key && view && !document.hidden) refresh().catch(error => message(error.message, true));
+  if (!view || busy || document.hidden) return;
+  const requestedSession = session;
+  refresh().catch(error => { if (requestedSession === session) message(error.message, true); });
 }, 3000);
 const tabs = [...document.querySelectorAll('[role="tab"]')];
 function openTab(tab, focus = false) {
@@ -162,11 +195,13 @@ for (const [index, tab] of tabs.entries()) {
 byId('open-history').onclick = () => openTab(byId('tab-history'), true);
 byId('refresh').onclick = async () => {
   const button = byId('refresh');
+  const requestedSession = session;
   button.disabled = true;
   try {
     await refresh();
+    if (requestedSession === session) message('状态已刷新');
   } catch (error) {
-    message(error.message, true);
+    if (requestedSession === session) message(error.message, true);
   } finally {
     button.disabled = false;
   }
@@ -363,8 +398,7 @@ function renderAuth() {
   checkbox.checked = auths.length > 0 && visibleSelected === auths.length;
   checkbox.indeterminate = visibleSelected > 0 && !checkbox.checked;
   byId('auth-count').textContent = '显示 ' + auths.length + ' / ' + view.auths.length + ' 项认证';
-  byId('batch-actions').hidden = !selected.size;
-  byId('selected-count').textContent = '已选 ' + selected.size + ' 项';
+  updateBatchActions();
 
   const active = document.activeElement;
   const activeCredential = active?.closest('[data-auth]');
@@ -425,31 +459,109 @@ function renderHistory() {
 byId('history-search').oninput = renderHistory;
 byId('history-filter').onchange = renderHistory;
 
-async function perform(fn) {
+function updateBatchActions() {
+  const tooMany = selected.size > maxBatchSize;
+  byId('batch-actions').hidden = !selected.size;
+  const count = '已选 ' + selected.size + ' 项' + (tooMany ? ' · 每次最多 ' + maxBatchSize + ' 项' : '');
+  const label = byId('selected-count');
+  if (label.textContent !== count) label.textContent = count;
+  for (const id of ['batch-on', 'batch-off', 'batch-check']) byId(id).disabled = busy || tooMany;
+}
+function syncWriteControls() {
+  updateSettingsState();
+  updateBatchActions();
+  for (const id of ['reload-settings', 'save-auth', 'close-dialog']) byId(id).disabled = busy;
+  byId('settings-fields').inert = busy;
+  byId('auth-fields').inert = busy;
+}
+function formError(id, text = '') {
+  const line = byId(id);
+  line.hidden = !text;
+  line.textContent = text;
+}
+async function perform(write, { errorId, applied } = {}) {
+  if (busy || !view) return;
+  const requestedSession = session;
+  busy = true;
+  syncWriteControls();
+  if (errorId) formError(errorId);
+  if (errorId !== 'auth-error') message('正在处理…');
   try {
-    const text = await fn();
-    message(text || '已保存');
-    await refresh();
+    const result = await write();
+    if (requestedSession !== session) return;
+    let refreshed = false;
+    try {
+      await refreshLatest(requestedSession);
+      refreshed = true;
+    } catch {
+      // The write and subsequent state fetch have separate outcomes.
+    }
+    if (requestedSession !== session) return;
+    applied?.(refreshed);
+    message(result.text + (refreshed ? '' : '。状态刷新失败，请重试刷新。'), result.failed || !refreshed);
   } catch (error) {
-    message(error.message, true);
+    if (requestedSession !== session) return;
+    if (errorId) {
+      formError(errorId, error.message);
+      message('');
+    } else message(error.message, true);
+  } finally {
+    if (requestedSession === session) {
+      busy = false;
+      syncWriteControls();
+    }
   }
 }
-function action(name, ids, confirm = false) {
-  if (!ids.length) return message('请先选择认证文件。', true);
-  if (confirm && !window.confirm('确认对选定的 ' + ids.length + ' 个认证执行此操作？')) return;
-  perform(async () => {
+const confirmation = byId('confirm-dialog');
+let resolveConfirmation = null;
+function closeConfirmation(confirmed) {
+  if (!confirmation.open) return;
+  confirmation.close();
+  resolveConfirmation?.(confirmed);
+  resolveConfirmation = null;
+}
+byId('confirm-cancel').onclick = () => closeConfirmation(false);
+byId('confirm-submit').onclick = () => closeConfirmation(true);
+confirmation.addEventListener('cancel', event => {
+  event.preventDefault();
+  closeConfirmation(false);
+});
+function confirmAction(title, detail) {
+  if (confirmation.open) return Promise.resolve(false);
+  byId('confirm-title').textContent = title;
+  byId('confirm-detail').textContent = detail;
+  byId('confirm-submit').textContent = title;
+  confirmation.showModal();
+  return new Promise(resolve => { resolveConfirmation = resolve; });
+}
+const actionLabels = {
+  check: ['发起检测', '检测任务已受理'],
+  isolate: ['隔离认证', '已隔离认证'],
+  release: ['解除隔离', '已解除插件隔离'],
+  recover: ['恢复认证', '已恢复认证'],
+};
+async function action(name, ids, confirm = false) {
+  if (busy || !view || !ids.length || ids.length > maxBatchSize) return;
+  const [title, success] = actionLabels[name];
+  const detail = ids.length === 1 ? (view.auths.find(a => a.id === ids[0])?.name || '这项认证') : ids.length + ' 项选中的认证';
+  if (confirm && !await confirmAction(title, '对 ' + detail + '执行此操作？')) return;
+  await perform(async () => {
     const { results } = await api('/action', 'POST', { action: name, ids });
     const failures = Object.values(results).filter(Boolean);
-    if (failures.length) throw new Error('已受理 ' + (ids.length - failures.length) + ' 项。失败：' + [...new Set(failures)].join('；'));
-    return name === 'check' ? '检测任务已受理' : '操作已保存';
+    if (!failures.length) return { text: success };
+    return { text: '成功 ' + (ids.length - failures.length) + ' 项，失败 ' + failures.length + ' 项。' + [...new Set(failures)].join('、'), failed: true };
   });
 }
-function bulkEnabled(value) {
+async function bulkEnabled(value) {
   const ids = [...selected];
-  if (!ids.length) return message('请先选择认证文件。', true);
-  if (!window.confirm('确认更新 ' + ids.length + ' 个认证？')) return;
-  const auths = Object.fromEntries(ids.map(id => [id, { ...view.config.auths?.[id], enabled: value }]));
-  perform(() => api('/auth-settings', 'PUT', { revision: view.revision, auths }).then(() => '批量设置已保存'));
+  if (busy || !view || !ids.length || ids.length > maxBatchSize) return;
+  const title = value ? '启用检测' : '关闭检测';
+  if (!await confirmAction(title, '更新 ' + ids.length + ' 项选中认证的检测设置？')) return;
+  await perform(async () => {
+    const auths = Object.fromEntries(ids.map(id => [id, { ...view.config.auths?.[id], enabled: value }]));
+    await api('/auth-settings', 'PUT', { revision: view.revision, auths });
+    return { text: '批量设置已保存' };
+  });
 }
 byId('batch-on').onclick = () => bulkEnabled(true);
 byId('batch-off').onclick = () => bulkEnabled(false);
@@ -459,22 +571,35 @@ const policyFields = {
   enabled: ['检测开关', 'bool'], idle: ['定时空闲检测', 'bool'], trigger: ['上游异常触发', 'bool'],
   model: ['测试模型', 'text'], expected: ['预期指纹模型', 'model'],
 };
-const settingsFields = {
-  enabled: ['全局检测', 'bool'], prefer_failed_model: ['优先检测已映射的异常模型', 'bool'],
-  scan_seconds: ['扫描周期（秒）', 'number'], idle_seconds: ['空闲阈值（秒）', 'number'],
-  interval_seconds: ['最短检测间隔（秒）', 'number'], mismatch_recheck_seconds: ['不一致复检间隔（秒）', 'number'],
-  timeout_seconds: ['单次挑战超时（秒）', 'number'],
-  jitter_seconds: ['最大抖动（秒）', 'number'], dedupe_seconds: ['事件去重窗口（秒）', 'number'],
-  trigger_count: ['触发事件数量', 'number'], http_statuses: ['HTTP 错误状态码', 'json'],
-  error_codes: ['结构化错误代码', 'json'], error_texts: ['错误文本片段', 'json'],
-  min_probability: ['参考库内最小校准概率', 'number'], confirm_rounds: ['连续不一致确认轮数', 'number'],
-  auto_disable: ['确认后自动停用', 'bool'], max_concurrent: ['全局最大检测并发', 'number'],
-  per_provider: ['单提供商最大检测并发', 'number'], retry_seconds: ['首次重试间隔（秒）', 'number'],
-  max_retry_seconds: ['最大退避间隔（秒）', 'number'], max_retries: ['最大重试次数', 'number'],
-  max_isolation_seconds: ['自动隔离期限（秒）', 'number'], expiry: ['隔离期限到期策略', 'expiry'],
-  overload_limit: ['过载保护触发次数', 'number'], overload_pause_seconds: ['过载暂停时间（秒）', 'number'],
-  history_limit: ['历史最大保留条数', 'number'], expected_models: ['请求模型到预期模型映射', 'json'],
-  providers: ['提供商覆盖设置', 'json'],
+const settingsGroups = {
+  '基本设置': {
+    enabled: ['全局检测', 'bool'], history_limit: ['历史最大保留条数', 'number'],
+  },
+  '扫描与复检': {
+    scan_seconds: ['扫描周期（秒）', 'number'], idle_seconds: ['空闲阈值（秒）', 'number'],
+    interval_seconds: ['最短检测间隔（秒）', 'number'], mismatch_recheck_seconds: ['不一致复检间隔（秒）', 'number'],
+    timeout_seconds: ['单次挑战超时（秒）', 'number'], jitter_seconds: ['最大抖动（秒）', 'number'],
+  },
+  '异常触发': {
+    dedupe_seconds: ['事件去重窗口（秒）', 'number'], trigger_count: ['触发事件数量', 'number'],
+    http_statuses: ['HTTP 错误状态码', 'json'], error_codes: ['结构化错误代码', 'json'],
+    error_texts: ['错误文本片段', 'json'],
+  },
+  '判定与隔离': {
+    min_probability: ['参考库内最小校准概率', 'number'], confirm_rounds: ['连续不一致确认轮数', 'number'],
+    auto_disable: ['确认后自动停用', 'bool'],
+    max_isolation_seconds: ['自动隔离期限（秒）', 'number'], expiry: ['隔离期限到期策略', 'expiry'],
+  },
+  '并发与重试': {
+    max_concurrent: ['全局最大检测并发', 'number'], per_provider: ['单提供商最大检测并发', 'number'],
+    retry_seconds: ['首次重试间隔（秒）', 'number'], max_retry_seconds: ['最大退避间隔（秒）', 'number'],
+    max_retries: ['最大重试次数', 'number'],
+    overload_limit: ['过载保护触发次数', 'number'], overload_pause_seconds: ['过载暂停时间（秒）', 'number'],
+  },
+  '模型与提供商': {
+    prefer_failed_model: ['优先检测已映射的异常模型', 'bool'], expected_models: ['请求模型到预期模型映射', 'json'],
+    providers: ['提供商覆盖设置', 'json'],
+  },
 };
 function field(container, name, spec, value, inherit = false) {
   const [label, type] = spec;
@@ -527,47 +652,109 @@ function collect(container, inherit = false) {
   }
   return result;
 }
+function settingsGroup(title, specs, values) {
+  const group = element('fieldset', null, { class: 'settings-group panel' });
+  group.append(element('legend', title));
+  const fields = element('div', null, { class: 'fields' });
+  for (const [name, spec] of Object.entries(specs)) field(fields, name, spec, values[name]);
+  group.append(fields);
+  return group;
+}
+function settingsSnapshot() {
+  const fields = byId('settings-form').querySelectorAll('[name]');
+  return JSON.stringify([...fields].map(input => input.value));
+}
+function settingsDirty() {
+  return settingsBaseline !== null && settingsSnapshot() !== settingsBaseline;
+}
+function updateSettingsState() {
+  const dirty = settingsDirty();
+  const conflict = dirty && view?.revision !== settingsRevision;
+  const text = conflict ? '配置已更新，请重新载入' : dirty ? '有未保存的更改' : '';
+  const status = byId('settings-state');
+  if (status.textContent !== text) status.textContent = text;
+  byId('save-settings').disabled = busy || !dirty || conflict;
+}
 function drawSettings() {
   if (!view) return;
   settingsRevision = view.revision;
   const container = byId('settings-fields');
-  container.replaceChildren();
-  for (const [name, spec] of Object.entries(settingsFields)) field(container, name, spec, view.config[name]);
-  const defaults = element('fieldset', null, { class: 'wide fields', id: 'default-fields' });
-  defaults.append(element('legend', '默认认证设置'));
-  for (const [name, spec] of Object.entries(policyFields)) field(defaults, name, spec, view.config.default[name]);
-  container.append(defaults);
+  const defaults = settingsGroup('默认认证设置', policyFields, view.config.default);
+  defaults.querySelector('.fields').id = 'default-fields';
+  const [general, ...groups] = Object.entries(settingsGroups).map(([title, specs]) => {
+    const group = settingsGroup(title, specs, view.config);
+    group.querySelector('.fields').setAttribute('data-global-fields', '');
+    return group;
+  });
+  container.replaceChildren(general, defaults, ...groups);
+  settingsBaseline = settingsSnapshot();
+  formError('settings-error');
+  updateSettingsState();
 }
-byId('reload-settings').onclick = drawSettings;
+byId('settings-form').oninput = () => {
+  formError('settings-error');
+  updateSettingsState();
+};
+byId('reload-settings').onclick = async () => {
+  if (!view || busy) return;
+  if (settingsDirty() && !await confirmAction('重新载入', '放弃未保存的更改并载入当前配置？')) return;
+  if (!view || busy) return;
+  const requestedSession = session;
+  busy = true;
+  syncWriteControls();
+  try {
+    await refreshLatest(requestedSession);
+    if (requestedSession !== session) return;
+    drawSettings();
+    message('已重新载入设置');
+  } catch (error) {
+    if (requestedSession === session) formError('settings-error', error.message);
+  } finally {
+    if (requestedSession === session) {
+      busy = false;
+      syncWriteControls();
+    }
+  }
+};
 byId('settings-form').onsubmit = event => {
   event.preventDefault();
+  if (!settingsDirty() || byId('save-settings').disabled) return;
   perform(async () => {
-    const container = byId('settings-fields');
-    const settings = collect(container);
+    const groups = document.querySelectorAll('[data-global-fields]');
+    const settings = Object.assign({}, ...[...groups].map(group => collect(group)));
     settings.default = collect(byId('default-fields'));
-    settings.enabled = container.querySelector('select[name="enabled"]').value === 'true';
     settings.auths = view.config.auths;
     await api('/settings', 'PUT', { revision: settingsRevision, settings });
-    await refresh();
-    drawSettings();
-    return '全局设置已应用';
-  });
+    return { text: '全局设置已应用' };
+  }, { errorId: 'settings-error', applied: refreshed => { if (refreshed) drawSettings(); } });
 };
+const authDialog = byId('auth-dialog');
 function editAuth(a) {
+  if (busy) return;
   editing = { id: a.id, revision: view.revision };
   byId('auth-name').textContent = a.name;
+  formError('auth-error');
   const container = byId('auth-fields');
   container.replaceChildren();
   for (const [name, spec] of Object.entries(policyFields)) field(container, name, spec, view.config.auths?.[a.id]?.[name], true);
-  byId('auth-dialog').showModal();
+  authDialog.showModal();
 }
-byId('close-dialog').onclick = () => byId('auth-dialog').close();
+byId('close-dialog').onclick = () => authDialog.close();
+authDialog.addEventListener('cancel', event => {
+  if (busy) event.preventDefault();
+});
+authDialog.addEventListener('close', () => {
+  if (!view || !editing) return;
+  const trigger = document.querySelector('[data-auth="' + CSS.escape(editing.id) + '"] [data-control="settings"]');
+  (trigger || byId('auth-search')).focus({ preventScroll: true });
+  editing = null;
+});
 byId('auth-form').onsubmit = event => {
   event.preventDefault();
+  if (!editing) return;
   perform(async () => {
     const auths = { [editing.id]: collect(byId('auth-fields'), true) };
     await api('/auth-settings', 'PUT', { revision: editing.revision, auths });
-    byId('auth-dialog').close();
-    return '认证设置已保存';
-  });
+    return { text: '认证设置已保存' };
+  }, { errorId: 'auth-error', applied: () => authDialog.close() });
 };

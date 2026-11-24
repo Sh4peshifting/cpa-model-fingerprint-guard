@@ -82,18 +82,40 @@ try {
   })()`);
   assert(await evaluate('document.activeElement.id === "tab-auth" && !document.getElementById("auth").hidden'));
   await evaluate('document.querySelector("[data-tab=settings]").click()');
+  assert(await evaluate('document.getElementById("save-settings").disabled'));
   const configured = await evaluate(`(() => {
     const input = document.querySelector('input[name="history_limit"]');
     const interval = document.querySelector('input[name="mismatch_recheck_seconds"]');
-    if (interval?.value !== '172800') return false;
+    if (interval?.value !== '172800' || interval.closest('fieldset').querySelector('legend').textContent !== '扫描与复检') return false;
     input.value = 42;
     interval.value = 43200;
-    document.getElementById('settings-form').requestSubmit();
-    return !!input;
+    interval.dispatchEvent(new Event('input', { bubbles: true }));
+    return !document.getElementById('save-settings').disabled;
   })()`);
   assert(configured);
+  const modelMappings = await evaluate(`document.querySelector('textarea[name="expected_models"]').value`);
+  await evaluate(`(() => {
+    document.querySelector('textarea[name="expected_models"]').value = '{';
+    document.getElementById('save-settings').click();
+  })()`);
+  await until(() => evaluate('!document.getElementById("settings-error").hidden && document.getElementById("settings-error").textContent.includes("JSON 格式有误")'));
+  await evaluate(`(() => {
+    const mappings = document.querySelector('textarea[name="expected_models"]');
+    mappings.value = ${JSON.stringify(modelMappings)};
+    mappings.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  assert(await evaluate('document.getElementById("settings-error").hidden'));
+  await evaluate('document.getElementById("refresh").click()');
+  await until(() => evaluate('document.getElementById("notice").textContent === "状态已刷新"'));
+  assert.equal(await evaluate('document.getElementById("settings-state").textContent'), '有未保存的更改');
+  await evaluate('document.getElementById("reload-settings").click()');
+  assert(await evaluate('document.getElementById("confirm-dialog").open && document.getElementById("confirm-title").textContent === "重新载入"'));
+  await evaluate('document.getElementById("confirm-cancel").click()');
+  assert.equal(await evaluate(`document.querySelector('input[name="mismatch_recheck_seconds"]').value`), '43200');
+  await evaluate('document.getElementById("save-settings").click()');
   await until(() => evaluate('document.getElementById("notice").textContent.includes("全局设置已应用")'));
   assert.equal(await evaluate(`document.querySelector('input[name="mismatch_recheck_seconds"]').value`), '43200');
+  assert(await evaluate('document.getElementById("save-settings").disabled'));
   await evaluate('document.querySelector("[data-tab=auth]").click()');
   assert.equal(await evaluate('document.querySelectorAll("#auth-cards article").length'), 2);
   await evaluate(`(() => {
@@ -106,6 +128,13 @@ try {
   assert.equal(await evaluate('document.querySelectorAll("#auth-cards article").length'), 2);
   await evaluate('document.querySelector("#auth-cards input[type=checkbox]").click()');
   assert(await evaluate('!document.getElementById("batch-actions").hidden && document.getElementById("selected-count").textContent === "已选 1 项"'));
+  await evaluate('document.getElementById("batch-check").click()');
+  assert(await evaluate('document.getElementById("confirm-dialog").open && document.getElementById("confirm-title").textContent === "发起检测"'));
+  await evaluate('document.getElementById("confirm-cancel").click()');
+  await evaluate('document.getElementById("batch-on").click()');
+  assert(await evaluate('document.getElementById("confirm-dialog").open && document.getElementById("confirm-title").textContent === "启用检测"'));
+  await evaluate('document.getElementById("confirm-submit").click()');
+  await until(() => evaluate('document.getElementById("notice").textContent === "批量设置已保存"'));
   await evaluate('document.querySelector(\'[data-layout="table"]\').click()');
   assert.equal(await evaluate('document.querySelectorAll("#auth-rows tr").length'), 2);
   assert(await evaluate('document.querySelector("#auth thead").textContent.includes("认证 / 提供商")'));
@@ -155,7 +184,7 @@ try {
   await until(async () => await frameTheme() === 'light');
   await evaluate('document.querySelector("#theme-fixture").remove()');
   socket.close();
-  console.log('Chromium: authentication, theme switching, mobile tables, live settings, credential controls, history and logout passed');
+  console.log('Chromium: authentication, themes, keyboard tabs, credential layouts, batch confirmation, settings drafts, mobile tables, history and logout passed');
 } finally {
   chrome.kill();
   await exit;

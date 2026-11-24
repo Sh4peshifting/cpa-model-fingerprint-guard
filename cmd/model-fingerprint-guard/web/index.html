@@ -92,10 +92,15 @@
       <div id="auth-empty" hidden></div>
     </section>
     <section id="settings" role="tabpanel" aria-labelledby="tab-settings" tabindex="0" hidden>
-      <form id="settings-form" class="panel">
-        <p>单认证设置优先于提供商设置。全局关闭会停止创建检测任务。</p>
-        <div id="settings-fields" class="fields"></div>
-        <div class="toolbar"><button class="primary">保存并应用</button><button id="reload-settings" type="button">重新载入</button></div>
+      <form id="settings-form">
+        <p class="settings-intro">单认证设置优先于提供商设置。全局关闭会停止创建检测任务。</p>
+        <div id="settings-fields" class="settings-groups"></div>
+        <div class="settings-actions panel">
+          <p class="form-error" id="settings-error" role="alert" hidden></p>
+          <p id="settings-state" role="status"></p>
+          <button id="reload-settings" type="button"><svg class="icon" aria-hidden="true"><use href="#icon-refresh"></use></svg>重新载入</button>
+          <button class="primary" id="save-settings" disabled>保存并应用</button>
+        </div>
       </form>
     </section>
     <section id="history" role="tabpanel" aria-labelledby="tab-history" tabindex="0" hidden>
@@ -116,8 +121,17 @@
   <form id="auth-form">
     <h2 id="auth-name"></h2>
     <div class="fields" id="auth-fields"></div>
-    <div class="toolbar"><button class="primary">保存</button><button type="button" id="close-dialog">取消</button></div>
+    <p class="form-error" id="auth-error" role="alert" hidden></p>
+    <div class="dialog-actions"><button type="button" class="ghost" id="close-dialog">取消</button><button class="primary" id="save-auth">保存</button></div>
   </form>
+</dialog>
+<dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-detail">
+  <h2 id="confirm-title"></h2>
+  <p id="confirm-detail"></p>
+  <div class="dialog-actions">
+    <button type="button" class="ghost" id="confirm-cancel" autofocus>取消</button>
+    <button type="button" class="primary" id="confirm-submit">确认</button>
+  </div>
 </dialog>
 <datalist id="reference-models"></datalist>
 </body>

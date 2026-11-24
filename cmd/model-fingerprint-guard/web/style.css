@@ -322,6 +322,32 @@ legend { padding-inline: 4px; font-weight: 600; }
 textarea { resize: vertical; font-family: ui-monospace, monospace; }
 dialog { width: min(620px, calc(100% - 32px)); max-height: calc(100% - 32px); padding: 20px; color: var(--text); }
 dialog::backdrop { background: rgb(21 20 18 / .52); }
+.dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+#confirm-dialog { width: min(420px, calc(100% - 32px)); }
+#confirm-detail { overflow-wrap: anywhere; }
+.form-error { margin-top: 12px; padding: 8px 12px; border-radius: 8px; background: var(--error-bg); color: var(--error-text); }
+
+.settings-intro { margin-bottom: 12px; }
+.settings-groups { display: grid; gap: 12px; }
+.settings-group { margin: 0; padding: 10px clamp(12px, 2vw, 20px) 18px; }
+.settings-group legend { padding-inline: 8px; font-size: 15px; }
+.settings-group .fields { margin: 0; }
+.settings-actions {
+  position: sticky;
+  z-index: 1;
+  bottom: 12px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 10px 12px;
+  background: var(--floating);
+}
+#settings-state { margin-inline-end: auto; font-size: 13px; }
+#settings-state:empty { display: none; }
+#settings-error { flex-basis: 100%; margin: 0; }
 
 @media (max-width: 600px) {
   main { padding-block: 20px 24px; }
