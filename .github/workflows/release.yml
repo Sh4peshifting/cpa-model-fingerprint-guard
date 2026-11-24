@@ -122,7 +122,7 @@ jobs:
         shell: bash
         run: |
           artifact="$(GOOS=darwin GOARCH=arm64 CC=clang ./scripts/build.sh)"
-          lipo -verify_arch arm64 "$artifact"
+          lipo "$artifact" -verify_arch arm64
       - name: Cross-build Windows ARM64 plugin
         if: matrix.target == 'windows-arm64'
         shell: bash
