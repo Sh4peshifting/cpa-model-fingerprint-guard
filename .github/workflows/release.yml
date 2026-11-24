@@ -1,0 +1,95 @@
+name: Release native plugin
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.26.11'
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-amd64, runner: ubuntu-latest, manylinux: x86_64 }
+          - { target: linux-arm64, runner: ubuntu-24.04-arm, manylinux: aarch64 }
+          - { target: darwin-amd64, runner: macos-15-intel }
+          - { target: darwin-arm64, runner: macos-15 }
+          - { target: windows-amd64, runner: windows-latest }
+          - { target: windows-arm64, runner: windows-11-arm }
+          - { target: freebsd-amd64, runner: ubuntu-latest }
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Set release version
+        shell: bash
+        run: echo "MFG_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Build Linux glibc plugin
+        if: matrix.manylinux
+        shell: bash
+        env:
+          MANYLINUX_ARCH: ${{ matrix.manylinux }}
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/src" -v "$(go env GOROOT):/opt/host-go:ro" \
+            -w /src -e MFG_VERSION "quay.io/pypa/manylinux2014_$MANYLINUX_ARCH" \
+            bash -euo pipefail -c '
+              export PATH="/opt/host-go/bin:/opt/python/cp312-cp312/bin:$PATH"
+              export GOPATH=/tmp/mfg-go GOCACHE=/tmp/mfg-cache GOTOOLCHAIN=local
+              artifact="$(./scripts/build.sh)"
+              newest="$(readelf --version-info "$artifact" | sed -n "s/.*Name: GLIBC_\([0-9.]*\).*/\1/p" | sort -Vu | tail -n 1)"
+              test "$(printf "2.17\n%s\n" "$newest" | sort -V | tail -n 1)" = "2.17"
+            '
+      - name: Build macOS and Windows plugins
+        if: startsWith(matrix.target, 'darwin-') || startsWith(matrix.target, 'windows-')
+        shell: bash
+        run: ./scripts/build.sh
+      - name: Build FreeBSD plugin
+        if: matrix.target == 'freebsd-amd64'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld
+          sysroot="$(mktemp -d)"
+          curl -fsSL --retry 3 https://download.freebsd.org/releases/amd64/14.4-RELEASE/base.txz -o "$sysroot/base.txz"
+          sudo tar -xf "$sysroot/base.txz" -C "$sysroot" ./usr/include ./usr/lib ./lib
+          GOOS=freebsd GOARCH=amd64 CC="clang --target=x86_64-unknown-freebsd14 --sysroot=$sysroot" \
+            CGO_LDFLAGS=-fuse-ld=lld ./scripts/build.sh
+      - name: Package plugin and notices
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: tar -czf "dist/model-fingerprint-guard-v${MFG_VERSION}-${TARGET}.tar.gz" -C dist "$TARGET" -C .. README.md config.example.yaml LICENSE licenses docs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd release
+          sha256sum ./*.tar.gz > SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes ./*.tar.gz SHA256SUMS
