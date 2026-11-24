@@ -72,12 +72,12 @@ function message(text, bad = false) {
   node.classList.toggle('error', bad);
   if (node.textContent !== text) node.textContent = text;
 }
-async function api(path, method = 'GET', body) {
+async function api(path, method = 'GET', body, timeout = 15000) {
   const headers = { Authorization: 'Bearer ' + key };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   const response = await fetch(apiBase + path, {
     method, headers, credentials: 'omit', cache: 'no-store', redirect: 'error',
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(timeout),
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (response.status === 401 || response.status === 403) throw new Error('管理密钥无效或宿主禁止访问。');
@@ -85,17 +85,14 @@ async function api(path, method = 'GET', body) {
   if (!response.ok) throw new Error(data.error || '管理接口请求失败。');
   return data;
 }
-function refresh() {
+function refresh(timeout) {
   if (!key) return Promise.resolve();
   if (refreshRequest) return refreshRequest;
   const requestedSession = session;
-  const request = api('/state').then(next => {
+  const request = api('/state', 'GET', undefined, timeout).then(next => {
     if (requestedSession !== session) return;
     const serialized = JSON.stringify(next);
     view = next;
-    byId('login').hidden = true;
-    byId('session-actions').hidden = false;
-    byId('workspace').hidden = false;
     if (serialized !== lastRender) {
       lastRender = serialized;
       render();
@@ -112,28 +109,77 @@ async function refreshLatest(requestedSession) {
   await refreshRequest?.catch(() => {});
   if (requestedSession === session) await refresh();
 }
-byId('login').addEventListener('submit', async event => {
-  event.preventDefault();
+function setConnected(connected) {
+  byId('login-page').hidden = connected;
+  byId('page-header').hidden = !connected;
+  byId('session-actions').hidden = !connected;
+  byId('workspace').hidden = !connected;
+}
+function loginStatus(text, bad = false) {
+  const status = byId('login-status');
+  status.hidden = !text;
+  status.classList.toggle('error', bad);
+  status.textContent = text;
+}
+function rememberedPanelKey() {
+  try {
+    // CLIProxyAPI Management Center v1.29.1 persists an opt-in, reversible v2 record.
+    // Read the current origin's record only and bind it to this plugin's root API.
+    if (window.top.location.origin !== location.origin || localStorage.getItem('isLoggedIn') !== 'true') return '';
+    const prefix = 'enc::v2::';
+    const raw = localStorage.getItem('cli-proxy-auth');
+    if (!raw?.startsWith(prefix)) return '';
+    const mask = new TextEncoder().encode('cli-proxy-api-webui::secure-storage|' + location.host);
+    const bytes = Uint8Array.from(atob(raw.slice(prefix.length)),
+      (char, index) => char.charCodeAt(0) ^ mask[index % mask.length]);
+    const { state } = JSON.parse(new TextDecoder().decode(bytes));
+    if (state?.rememberPassword !== true || typeof state.managementKey !== 'string' ||
+      typeof state.apiBase !== 'string' || new URL(state.apiBase).href !== location.origin + '/') {
+      return '';
+    }
+    return state.managementKey.trim();
+  } catch {
+    // Storage can be unavailable in an iframe or hold an unreadable record.
+    return '';
+  }
+}
+async function connect(managementKey, automatic = false) {
   const button = byId('connect');
-  if (button.disabled) return;
-  key = byId('key').value.trim();
-  byId('key').value = '';
-  if (!key) return message('请输入管理密钥。', true);
+  if (button.disabled || view) return;
+  if (!managementKey) return loginStatus('请输入管理密钥。', true);
+  key = managementKey;
+  const input = byId('key');
+  input.disabled = true;
   button.disabled = true;
   button.textContent = '正在连接…';
-  message('');
+  byId('login-fields').hidden = automatic;
+  loginStatus(automatic ? '正在验证已保存的登录…' : '');
   try {
-    await refresh();
+    await refresh(automatic ? 5000 : undefined);
     drawSettings();
-    byId('tab-overview').focus();
+    setConnected(true);
+    loginStatus('');
+    if (!automatic) byId('tab-overview').focus();
   } catch (error) {
     key = '';
-    message(error.message, true);
-    byId('key').focus();
+    view = null;
+    lastRender = '';
+    settingsBaseline = null;
+    loginStatus(automatic ? '自动登录未成功，请输入管理密钥。' : error.message, true);
   } finally {
+    byId('login-fields').hidden = false;
+    input.disabled = false;
     button.disabled = false;
     button.textContent = '连接管理接口';
+    if (!view && !automatic) input.focus();
   }
+}
+byId('login').addEventListener('submit', event => {
+  event.preventDefault();
+  const input = byId('key');
+  const managementKey = input.value.trim();
+  input.value = '';
+  void connect(managementKey);
 });
 byId('logout').onclick = () => {
   session++;
@@ -144,9 +190,7 @@ byId('logout').onclick = () => {
   settingsBaseline = null;
   selected.clear();
   lastRender = '';
-  byId('workspace').hidden = true;
-  byId('session-actions').hidden = true;
-  byId('login').hidden = false;
+  setConnected(false);
   editing = null;
   byId('auth-dialog').close();
   closeConfirmation(false);
@@ -160,6 +204,7 @@ byId('logout').onclick = () => {
   openTab(byId('tab-overview'));
   syncWriteControls();
   message('');
+  loginStatus('');
   byId('key').focus();
 };
 window.setInterval(() => {
@@ -758,3 +803,9 @@ byId('auth-form').onsubmit = event => {
     return { text: '认证设置已保存' };
   }, { errorId: 'auth-error', applied: () => authDialog.close() });
 };
+
+function tryPanelLogin() {
+  const managementKey = rememberedPanelKey();
+  if (managementKey) void connect(managementKey, true);
+}
+tryPanelLogin();

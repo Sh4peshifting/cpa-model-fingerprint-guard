@@ -61,9 +61,11 @@ body { margin: 0; }
 [hidden] { display: none !important; }
 
 main {
+  --padding-top: 32px;
+  --padding-bottom: 40px;
   max-width: 1440px;
   margin-inline: auto;
-  padding: 32px clamp(16px, 3vw, 40px) 40px;
+  padding: var(--padding-top) clamp(16px, 3vw, 40px) var(--padding-bottom);
 }
 
 .page-header {
@@ -176,7 +178,29 @@ nav button[aria-selected="true"] {
 }
 
 .panel { padding: clamp(12px, 2vw, 20px); }
-#login { display: grid; gap: 16px; width: min(100%, 400px); }
+.login-page {
+  display: grid;
+  place-items: center;
+  min-height: calc(100vh - var(--padding-top) - var(--padding-bottom));
+  min-height: calc(100dvh - var(--padding-top) - var(--padding-bottom));
+}
+
+#login {
+  display: grid;
+  gap: 18px;
+  width: min(100%, 416px);
+  padding: clamp(22px, 5vw, 36px);
+  border-radius: 16px;
+  background: var(--floating);
+}
+
+.login-heading { display: grid; justify-items: center; gap: 12px; text-align: center; }
+.login-heading .brand-icon { width: 52px; height: 52px; font-size: 27px; }
+.login-heading h1 { font-size: 25px; }
+.login-fields { display: grid; gap: 14px; }
+.login-fields button, .login-fields input { min-height: 42px; }
+#login-status { text-align: center; }
+#login-status.error { padding: 8px 12px; border-radius: 8px; background: var(--error-bg); color: var(--error-text); }
 
 #notice, .health {
   padding: 10px 14px;
@@ -350,7 +374,7 @@ dialog::backdrop { background: rgb(21 20 18 / .52); }
 #settings-error { flex-basis: 100%; margin: 0; }
 
 @media (max-width: 600px) {
-  main { padding-block: 20px 24px; }
+  main { --padding-top: 20px; --padding-bottom: 24px; }
   nav { display: grid; }
   nav button { min-height: 44px; flex-direction: column; gap: 2px; padding-inline: 2px; }
   .page-header { gap: 8px; }

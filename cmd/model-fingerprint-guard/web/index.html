@@ -27,7 +27,20 @@
   <symbol id="icon-inbox" viewBox="0 0 24 24"><path d="m4 12 3-7h10l3 7v7H4zm0 0h5l1 2h4l1-2h5"/></symbol>
 </svg>
 <main>
-  <header class="page-header">
+  <div class="login-page" id="login-page">
+    <form id="login" class="panel" aria-labelledby="login-title">
+      <div class="login-heading">
+        <span class="brand-icon"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg></span>
+        <h1 id="login-title">模型指纹守卫</h1>
+      </div>
+      <p id="login-status" role="status" aria-live="polite" hidden></p>
+      <div class="login-fields" id="login-fields">
+        <label>CLIProxyAPI 管理密钥<input type="password" id="key" required autocomplete="off"></label>
+        <button class="primary" id="connect">连接管理接口</button>
+      </div>
+    </form>
+  </div>
+  <header class="page-header" id="page-header" hidden>
     <div class="page-identity">
       <span class="brand-icon"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg></span>
       <div><h1>模型指纹守卫</h1><p>CLIProxyAPI 认证检测与调度隔离</p></div>
@@ -38,10 +51,6 @@
     </div>
   </header>
   <p id="notice" role="status" aria-live="polite" hidden></p>
-  <form id="login" class="panel">
-    <label>CLIProxyAPI 管理密钥<input type="password" id="key" required autocomplete="off"></label>
-    <button class="primary" id="connect">连接管理接口</button>
-  </form>
   <div id="workspace" hidden>
     <nav role="tablist" aria-label="管理页面">
       <button type="button" id="tab-overview" data-tab="overview" role="tab" aria-controls="overview" aria-selected="true"><svg class="icon" aria-hidden="true"><use href="#icon-overview"></use></svg>运行概览</button>
