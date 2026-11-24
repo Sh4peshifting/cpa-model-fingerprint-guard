@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: plugin-release
+  group: plugin-store-release
   cancel-in-progress: false
 
 env:
@@ -81,7 +81,7 @@ jobs:
           - { target: linux-amd64, runner: ubuntu-latest, manylinux: "x86_64@sha256:8a79ff36ce155d8f242dc8013d73c5e8bbe937defb15de7d7afb342c1ab537f4" }
           - { target: linux-arm64, runner: ubuntu-24.04-arm, manylinux: "aarch64@sha256:382236bfd11d86894d9792a6fa5286190b8dd3d075a7032284e123c288711e4f" }
           - { target: darwin-amd64, runner: macos-15-intel }
-          - { target: darwin-arm64, runner: macos-15 }
+          - { target: darwin-arm64, runner: macos-15-intel }
           - { target: windows-amd64, runner: windows-latest }
           - { target: windows-arm64, runner: ubuntu-latest }
           - { target: freebsd-amd64, runner: ubuntu-latest }
@@ -114,9 +114,15 @@ jobs:
               test "$(printf "2.17\n%s\n" "$newest" | sort -V | tail -n 1)" = "2.17"
             '
       - name: Build macOS and Windows plugins
-        if: startsWith(matrix.target, 'darwin-') || matrix.target == 'windows-amd64'
+        if: matrix.target == 'darwin-amd64' || matrix.target == 'windows-amd64'
         shell: bash
         run: ./scripts/build.sh
+      - name: Cross-build macOS ARM64 plugin
+        if: matrix.target == 'darwin-arm64'
+        shell: bash
+        run: |
+          artifact="$(GOOS=darwin GOARCH=arm64 CC=clang ./scripts/build.sh)"
+          lipo -verify_arch arm64 "$artifact"
       - name: Cross-build Windows ARM64 plugin
         if: matrix.target == 'windows-arm64'
         shell: bash
