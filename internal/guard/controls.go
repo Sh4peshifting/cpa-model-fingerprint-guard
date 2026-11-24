@@ -10,9 +10,10 @@ import (
 type AuthView struct {
 	Auth
 	AuthState
-	Policy  Policy `json:"policy"`
-	Running bool   `json:"running"`
-	Active  int    `json:"active"`
+	Policy      Policy    `json:"policy"`
+	Running     bool      `json:"running"`
+	Active      int       `json:"active"`
+	NextRecheck time.Time `json:"next_recheck,omitzero"`
 }
 
 type View struct {
@@ -37,7 +38,12 @@ func (g *Guard) View() View {
 		StorageError: g.storageErr, InventoryError: g.listErr, OverloadUntil: g.pauses[""],
 	}
 	for id, a := range g.inventory {
-		v.Auths = append(v.Auths, AuthView{a, *g.state.Auths[id], g.state.Config.Policy(id, a.Provider), g.running[id] != nil, g.active[id]})
+		s := g.state.Auths[id]
+		p := g.state.Config.Policy(id, a.Provider)
+		v.Auths = append(v.Auths, AuthView{
+			Auth: a, AuthState: *s, Policy: p, Running: g.running[id] != nil, Active: g.active[id],
+			NextRecheck: mismatchRecheckDue(a, s, p, g.state.Config),
+		})
 	}
 	slices.SortFunc(v.Auths, func(a, b AuthView) int {
 		if cmp := strings.Compare(a.Name, b.Name); cmp != 0 {

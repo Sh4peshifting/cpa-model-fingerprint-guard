@@ -43,10 +43,10 @@ func (p *runtime) manage(r pluginapi.ManagementRequest) pluginapi.ManagementResp
 			Reference fingerprint.ReferenceInfo `json:"reference"`
 		}{View: p.View(), Reference: p.references.Info()})
 	case r.Method == "PUT" && r.Path == apiPath+"/settings":
-		var in struct {
+		in := struct {
 			Revision uint64       `json:"revision"`
 			Settings guard.Config `json:"settings"`
-		}
+		}{Settings: guard.Config{MismatchRecheckSeconds: p.View().Config.MismatchRecheckSeconds}}
 		if !decodeManagement(r.Body, &in) {
 			return errorResponse(400, "配置请求格式错误")
 		}

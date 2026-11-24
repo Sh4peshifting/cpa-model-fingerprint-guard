@@ -74,6 +74,8 @@ type Config struct {
 	OverloadLimit   int                 `json:"overload_limit" yaml:"overload_limit"`
 	OverloadPause   int                 `json:"overload_pause_seconds" yaml:"overload_pause_seconds"`
 	HistoryLimit    int                 `json:"history_limit" yaml:"history_limit"`
+
+	MismatchRecheckSeconds int `json:"mismatch_recheck_seconds" yaml:"mismatch_recheck_seconds"`
 }
 
 func DefaultConfig() Config {
@@ -81,7 +83,8 @@ func DefaultConfig() Config {
 		Default: Policy{Enabled: true, Idle: true, Trigger: true}, PreferFailed: true,
 		Providers: map[string]Override{}, Auths: map[string]Override{}, ExpectedModels: map[string]string{},
 		ScanSeconds: 60, IdleSeconds: 1800, IntervalSeconds: 21600, TimeoutSeconds: 90,
-		JitterSeconds: 10, DedupeSeconds: 10, TriggerCount: 1, HTTPStatuses: []int{502, 503},
+		MismatchRecheckSeconds: 2 * 24 * 60 * 60,
+		JitterSeconds:          10, DedupeSeconds: 10, TriggerCount: 1, HTTPStatuses: []int{502, 503},
 		ErrorCodes:     []string{"server_is_overloaded"},
 		ErrorTexts:     []string{"Our servers are currently overloaded. Please try again later."},
 		MinProbability: .9, ConfirmRounds: 2, AutoDisable: true,
@@ -121,6 +124,7 @@ func (c Config) Validate() error {
 		{"scan_seconds", c.ScanSeconds, 1, 86400},
 		{"idle_seconds", c.IdleSeconds, 1, 2592000},
 		{"interval_seconds", c.IntervalSeconds, 1, 2592000},
+		{"mismatch_recheck_seconds", c.MismatchRecheckSeconds, 1, 2592000},
 		{"timeout_seconds", c.TimeoutSeconds, 1, 600},
 		{"jitter_seconds", c.JitterSeconds, 0, 3600},
 		{"dedupe_seconds", c.DedupeSeconds, 0, 3600},

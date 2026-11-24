@@ -40,7 +40,8 @@ func loadState(path string, initial Config) (state, error) {
 		return state{}, errors.New("守卫状态文件超过大小限制")
 	}
 	dec := json.NewDecoder(io.LimitReader(file, maxStateBytes))
-	s = state{}
+	// Older state files inherit the new interval without resetting other fields.
+	s = state{Config: Config{MismatchRecheckSeconds: initial.MismatchRecheckSeconds}}
 	if err := dec.Decode(&s); err != nil {
 		return state{}, fmt.Errorf("读取守卫状态: %w", err)
 	}

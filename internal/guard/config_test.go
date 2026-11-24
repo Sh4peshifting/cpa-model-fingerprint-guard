@@ -30,6 +30,8 @@ func TestPolicyPrecedenceAndTarget(t *testing.T) {
 func TestValidateConfig(t *testing.T) {
 	for _, change := range []func(*Config){
 		func(c *Config) { c.ScanSeconds = 0 },
+		func(c *Config) { c.MismatchRecheckSeconds = 0 },
+		func(c *Config) { c.MismatchRecheckSeconds = 2592001 },
 		func(c *Config) { c.HTTPStatuses = []int{200} },
 		func(c *Config) { c.MinProbability = 1.1 },
 		func(c *Config) { c.PerProvider = c.MaxConcurrent + 1 },
