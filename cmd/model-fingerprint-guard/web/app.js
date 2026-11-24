@@ -325,7 +325,7 @@ function field(container, name, spec, value, inherit = false) {
 }
 function collect(container, inherit = false) {
   const result = {};
-  for (const input of container.querySelectorAll('[name]')) {
+  for (const input of container.querySelectorAll(':scope > label [name]')) {
     const { name, value } = input;
     if (inherit && !value.trim()) continue;
     try {
