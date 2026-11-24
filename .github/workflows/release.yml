@@ -17,8 +17,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { target: linux-amd64, runner: ubuntu-latest, manylinux: x86_64 }
-          - { target: linux-arm64, runner: ubuntu-24.04-arm, manylinux: aarch64 }
+          - { target: linux-amd64, runner: ubuntu-latest, manylinux: "x86_64@sha256:8a79ff36ce155d8f242dc8013d73c5e8bbe937defb15de7d7afb342c1ab537f4" }
+          - { target: linux-arm64, runner: ubuntu-24.04-arm, manylinux: "aarch64@sha256:382236bfd11d86894d9792a6fa5286190b8dd3d075a7032284e123c288711e4f" }
           - { target: darwin-amd64, runner: macos-15-intel }
           - { target: darwin-arm64, runner: macos-15 }
           - { target: windows-amd64, runner: windows-latest }
