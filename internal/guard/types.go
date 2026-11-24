@@ -28,12 +28,13 @@ const (
 )
 
 type Result struct {
-	Status      Status   `json:"status"`
-	Detected    string   `json:"detected,omitempty"`
-	Score       *float64 `json:"score,omitempty"`
-	Probability *float64 `json:"probability,omitempty"`
-	Reason      string   `json:"reason,omitempty"`
-	Overloaded  bool     `json:"-"`
+	ReferenceBuild string   `json:"reference_build,omitempty"`
+	Status         Status   `json:"status"`
+	Detected       string   `json:"detected,omitempty"`
+	Score          *float64 `json:"score,omitempty"`
+	Probability    *float64 `json:"probability,omitempty"`
+	Reason         string   `json:"reason,omitempty"`
+	Overloaded     bool     `json:"-"`
 }
 
 type Probe struct {

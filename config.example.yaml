@@ -10,7 +10,10 @@ plugins:
       state-dir: ".model-fingerprint-guard"
       # 仅在本机、使用已核对的原生 OAuth 路由且未配置改写模型或执行器的插件时开启。
       native-diagnostics: false
-      # 正常发布版自带经过校验的参考库。开发用本地目录可在此指定。
+      # 启动后在后台更新公开参考库，失败时保留当前版本。
+      reference-auto-update: true
+      reference-refresh-interval: 24h
+      # 设置本地目录时固定使用该参考库，并关闭网络更新。
       # reference-dir: "/path/to/pinned/lm-detector/data"
       settings:
         enabled: false

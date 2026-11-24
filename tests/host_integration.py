@@ -190,6 +190,7 @@ plugins:
     model-fingerprint-guard:
       enabled: true
       native-diagnostics: true
+      reference-auto-update: false
       state-dir: "{(tmp / "state").as_posix()}"
       settings:
         enabled: true

@@ -141,7 +141,7 @@ func (g *Guard) finish(ctx context.Context, start time.Time, j *job, current Aut
 	if trigger.At.IsZero() {
 		trigger = Trigger{Reason: j.reason, At: start}
 	}
-	if s.LastModel != j.Model || s.LastExpected != j.Expected || r.Status != Mismatch {
+	if s.LastModel != j.Model || s.LastExpected != j.Expected || s.LastResult.ReferenceBuild != r.ReferenceBuild || r.Status != Mismatch {
 		s.Consecutive = 0
 	}
 	s.LastCheck, s.LastModel, s.LastExpected, s.LastResult = now, j.Model, j.Expected, r

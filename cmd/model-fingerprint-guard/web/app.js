@@ -135,6 +135,11 @@ function render() {
     return card;
   }));
   const warnings = [];
+  if (view.reference) {
+    const reference = view.reference;
+    warnings.push('参考库构建时间 ' + localTime(reference.built_at));
+    if (reference.last_check_failed) warnings.push('参考库更新失败，保留当前版本。');
+  }
   if (!view.can_mutate) warnings.push('当前宿主会保留已确认异常的隔离状态，永久停用由管理员处理。');
   if (view.storage_error) warnings.push('持久化失败，请检查状态目录权限和磁盘空间。');
   if (view.inventory_error) warnings.push('认证清单读取失败，检测已暂停。');

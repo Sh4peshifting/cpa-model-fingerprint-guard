@@ -209,3 +209,30 @@ func TestExplicitReleaseExpiryAfterRetryExhaustion(t *testing.T) {
 		t.Fatal("explicit release policy did not take effect")
 	}
 }
+
+func TestMismatchConfirmationRestartsWhenReferenceChanges(t *testing.T) {
+	g, _, d, now := setupGuard(t, Mismatch, true)
+	g.state.Config.ConfirmRounds = 2
+	g.state.Config.Default.Idle = false
+	d.result.ReferenceBuild = "old"
+	close(d.done)
+	if err := g.Act(t.Context(), "check", "a"); err != nil {
+		t.Fatal(err)
+	}
+	g.step()
+	nextProbe(t, d)
+	g.wg.Wait()
+	if got := g.View().Auths[0].Consecutive; got != 1 {
+		t.Fatalf("first confirmation count = %d", got)
+	}
+
+	d.result.ReferenceBuild = "new"
+	*now = now.Add(time.Minute)
+	g.step()
+	nextProbe(t, d)
+	g.wg.Wait()
+	a := g.View().Auths[0]
+	if a.Consecutive != 1 || a.Abnormal != nil || a.LastResult.ReferenceBuild != "new" {
+		t.Fatalf("combined evidence from different builds: %+v", a)
+	}
+}

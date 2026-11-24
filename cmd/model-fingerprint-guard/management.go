@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bul1horn/cpa-model-fingerprint-guard/internal/fingerprint"
 	"github.com/bul1horn/cpa-model-fingerprint-guard/internal/guard"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
@@ -37,7 +38,10 @@ func (p *runtime) manage(r pluginapi.ManagementRequest) pluginapi.ManagementResp
 	}
 	switch {
 	case r.Method == "GET" && r.Path == apiPath+"/state":
-		return jsonResponse(200, p.View())
+		return jsonResponse(200, struct {
+			guard.View
+			Reference fingerprint.ReferenceInfo `json:"reference"`
+		}{View: p.View(), Reference: p.references.Info()})
 	case r.Method == "PUT" && r.Path == apiPath+"/settings":
 		var in struct {
 			Revision uint64       `json:"revision"`

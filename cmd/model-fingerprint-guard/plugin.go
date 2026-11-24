@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/bul1horn/cpa-model-fingerprint-guard/internal/cpa"
 	"github.com/bul1horn/cpa-model-fingerprint-guard/internal/fingerprint"
@@ -25,19 +26,22 @@ const pluginID = "model-fingerprint-guard"
 var releaseVersion = "0.1.0-dev"
 
 type pluginOptions struct {
-	Enabled      bool         `yaml:"enabled"`
-	Priority     int          `yaml:"priority"`
-	Store        yaml.Node    `yaml:"store"`
-	StateDir     string       `yaml:"state-dir"`
-	ReferenceDir string       `yaml:"reference-dir"`
-	Native       bool         `yaml:"native-diagnostics"`
-	Settings     guard.Config `yaml:"settings"`
+	Enabled             bool          `yaml:"enabled"`
+	Priority            int           `yaml:"priority"`
+	Store               yaml.Node     `yaml:"store"`
+	StateDir            string        `yaml:"state-dir"`
+	ReferenceAutoUpdate bool          `yaml:"reference-auto-update"`
+	ReferenceInterval   time.Duration `yaml:"reference-refresh-interval"`
+	ReferenceDir        string        `yaml:"reference-dir"`
+	Native              bool          `yaml:"native-diagnostics"`
+	Settings            guard.Config  `yaml:"settings"`
 }
 
 type runtime struct {
 	*guard.Guard
 	*cpa.Observer
-	options pluginOptions
+	options    pluginOptions
+	references *fingerprint.Updater
 }
 
 var (
@@ -58,6 +62,7 @@ func loadPlugin(input []byte, call cpa.Call) (any, error) {
 	}
 	o := pluginOptions{
 		StateDir: ".model-fingerprint-guard", Settings: guard.DefaultConfig(),
+		ReferenceAutoUpdate: true, ReferenceInterval: 24 * time.Hour,
 	}
 	if len(req.Config) > 0 {
 		dec := yaml.NewDecoder(bytes.NewReader(req.Config))
@@ -75,6 +80,9 @@ func loadPlugin(input []byte, call cpa.Call) (any, error) {
 	if o.StateDir == "" {
 		return nil, errors.New("state-dir must be a local directory")
 	}
+	if o.ReferenceInterval < time.Minute || o.ReferenceInterval > 30*24*time.Hour {
+		return nil, errors.New("reference-refresh-interval must be between 1m and 720h")
+	}
 	if err := o.Settings.Validate(); err != nil {
 		return nil, err
 	}
@@ -83,8 +91,9 @@ func loadPlugin(input []byte, call cpa.Call) (any, error) {
 	defer lifecycle.Unlock()
 	old := instance.Load()
 	if old != nil {
-		if old.options.StateDir != o.StateDir || old.options.ReferenceDir != o.ReferenceDir || old.options.Native != o.Native {
-			return nil, errors.New("restart CLIProxyAPI to change state-dir, reference-dir, or native-diagnostics")
+		if old.options.StateDir != o.StateDir || old.options.ReferenceDir != o.ReferenceDir || old.options.Native != o.Native ||
+			old.options.ReferenceAutoUpdate != o.ReferenceAutoUpdate || old.options.ReferenceInterval != o.ReferenceInterval {
+			return nil, errors.New("restart CLIProxyAPI to change state, reference, or native diagnostics options")
 		}
 		return registration(), nil
 	}
@@ -100,7 +109,13 @@ func loadPlugin(input []byte, call cpa.Call) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	instance.Store(&runtime{g, cpa.NewObserver(g, h), o})
+	interval := o.ReferenceInterval
+	if !o.ReferenceAutoUpdate || o.ReferenceDir != "" {
+		interval = 0
+	}
+	updater := fingerprint.NewUpdater(d, o.StateDir, interval)
+	instance.Store(&runtime{Guard: g, Observer: cpa.NewObserver(g, h), options: o, references: updater})
+	updater.Start()
 	g.Start()
 	return registration(), nil
 }
@@ -125,6 +140,7 @@ func stopPlugin() {
 	lifecycle.Lock()
 	defer lifecycle.Unlock()
 	if current := instance.Swap(nil); current != nil {
+		current.references.Close()
 		current.Close()
 	}
 }

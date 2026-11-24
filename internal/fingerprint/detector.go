@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	lmfpd "github.com/Ikaleio/lm-detector/sdk/go"
 	"github.com/bul1horn/cpa-model-fingerprint-guard/internal/guard"
@@ -25,13 +27,21 @@ type Response struct {
 }
 
 type Detector struct {
-	engine    *lmfpd.Detector
-	models    []string
+	active    atomic.Pointer[reference]
 	transport Transport
 }
 
+type reference struct {
+	engine  *lmfpd.Detector
+	models  []string
+	builtAt time.Time
+	source  string
+}
+
 func Open(ctx context.Context, dir string, transport Transport) (*Detector, error) {
+	source := "local"
 	if dir == "" {
+		source = "embedded"
 		var err error
 		var cleanup func()
 		dir, cleanup, err = embeddedReference()
@@ -40,6 +50,16 @@ func Open(ctx context.Context, dir string, transport Transport) (*Detector, erro
 		}
 		defer cleanup()
 	}
+	ref, err := loadReference(ctx, dir, source)
+	if err != nil {
+		return nil, err
+	}
+	d := &Detector{transport: transport}
+	d.active.Store(ref)
+	return d, nil
+}
+
+func loadReference(ctx context.Context, dir, source string) (*reference, error) {
 	// Absolute local paths force the SDK's offline load path and disable its
 	// background revalidation and remote data-source fallback.
 	dir, err := filepath.Abs(dir)
@@ -67,13 +87,24 @@ func Open(ctx context.Context, dir string, transport Transport) (*Detector, erro
 		models = append(models, m.ID)
 	}
 	slices.Sort(models)
-	return &Detector{engine: engine, models: models, transport: transport}, nil
+	builtAt, err := time.Parse(time.RFC3339Nano, engine.BuiltAt())
+	if err != nil {
+		return nil, errors.New("invalid reference build time")
+	}
+	return &reference{engine: engine, models: models, builtAt: builtAt.UTC(), source: source}, nil
 }
 
-func (d *Detector) Models() []string { return slices.Clone(d.models) }
+func (d *Detector) Models() []string { return slices.Clone(d.active.Load().models) }
 
 func (d *Detector) Check(ctx context.Context, p guard.Probe) guard.Result {
-	if _, supported := slices.BinarySearch(d.models, p.Expected); !supported {
+	ref := d.active.Load()
+	r := check(ctx, p, ref, d.transport)
+	r.ReferenceBuild = ref.builtAt.Format(time.RFC3339Nano)
+	return r
+}
+
+func check(ctx context.Context, p guard.Probe, ref *reference, transport Transport) guard.Result {
+	if _, supported := slices.BinarySearch(ref.models, p.Expected); !supported {
 		return guard.Result{Status: guard.Unsupported, Reason: "unknown_reference"}
 	}
 	api, protocol := protocolFormat(p.ProbeFormat)
@@ -104,7 +135,7 @@ func (d *Detector) Check(ctx context.Context, p guard.Probe) guard.Result {
 		// Only send the SDK-built request body. The SDK's placeholder URL and
 		// headers are never used. The host owns credentials and transport.
 		sampleCtx, cancel := context.WithTimeout(ctx, p.Timeout)
-		reply, err := d.transport.Sample(sampleCtx, p, protocol, payload)
+		reply, err := transport.Sample(sampleCtx, p, protocol, payload)
 		callErr := sampleCtx.Err()
 		cancel()
 		if ctx.Err() != nil {
@@ -122,7 +153,7 @@ func (d *Detector) Check(ctx context.Context, p guard.Probe) guard.Result {
 		}
 		outputs = append(outputs, lmfpd.Output{Text: text, ExpectedCount: challenge.ExpectedCount})
 	}
-	analysis, err := d.engine.Analyze(outputs, true)
+	analysis, err := ref.engine.Analyze(outputs, true)
 	if err != nil {
 		return guard.Result{Status: guard.Inconclusive, Reason: "invalid_samples"}
 	}
