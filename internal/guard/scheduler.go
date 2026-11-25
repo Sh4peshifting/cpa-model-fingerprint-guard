@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+const mismatchRecheck = "recheck"
+
 func (g *Guard) schedule(now time.Time, scan bool) {
 	cfg := g.state.Config
 	type candidate struct {
@@ -26,10 +28,24 @@ func (g *Guard) schedule(now time.Time, scan bool) {
 		if !p.Enabled || a.Disabled || g.listErr || g.running[id] != nil {
 			continue
 		}
-		if scan && p.Idle && !s.Isolated && s.Pending == "" && g.idle(now, id, s, cfg) {
-			s.Pending = "idle"
-			s.Due = now.Add(g.jitter(cfg.JitterSeconds))
-			g.dirty = true
+		triggerDisabled := s.Isolated && s.Trigger.Reason != "manual" && !p.Trigger
+		if scan && (s.Pending == "" || triggerDisabled && s.Pending == "confirm") {
+			if due := mismatchRecheckDue(a, s, p, cfg); !due.IsZero() && !now.Before(due) {
+				s.Pending, s.Due, s.Retries = mismatchRecheck, due, 0
+				g.dirty = true
+			} else if p.Idle && !s.Isolated && g.idle(now, id, s, cfg) {
+				s.Pending = "idle"
+				s.Due = now.Add(g.jitter(cfg.JitterSeconds))
+				g.dirty = true
+			}
+		}
+		if s.Pending == mismatchRecheck {
+			due := mismatchRecheckDue(a, s, p, cfg)
+			if due.IsZero() || now.Before(due) {
+				s.Pending, s.Due = "", time.Time{}
+				g.dirty = true
+				continue
+			}
 		}
 		if s.Pending == "" || now.Before(s.Due) || now.Before(g.pauses[""]) || now.Before(g.pauses[a.Provider]) {
 			continue
@@ -39,13 +55,13 @@ func (g *Guard) schedule(now time.Time, scan bool) {
 			g.dirty = true
 			continue
 		}
-		if s.Isolated && s.Trigger.Reason != "manual" && !p.Trigger && s.Pending != "manual" {
+		if triggerDisabled && s.Pending != "manual" && s.Pending != mismatchRecheck {
 			continue
 		}
 		ready = append(ready, candidate{a, s})
 	}
 
-	priority := map[string]int{"error": 0, "manual": 1, "confirm": 2, "idle": 3}
+	priority := map[string]int{"error": 0, "manual": 1, "confirm": 2, mismatchRecheck: 3, "idle": 4}
 	sort.Slice(ready, func(i, j int) bool {
 		a, b := ready[i], ready[j]
 		if ap, bp := priority[a.state.Pending], priority[b.state.Pending]; ap != bp {
@@ -78,9 +94,26 @@ func (g *Guard) idle(now time.Time, id string, s *AuthState, cfg Config) bool {
 		now.Sub(s.LastCheck) >= seconds(cfg.IntervalSeconds)
 }
 
+func mismatchRecheckDue(a Auth, s *AuthState, p Policy, cfg Config) time.Time {
+	fault := s.Abnormal
+	if !p.Enabled || a.Disabled || !a.Probeable || !s.Isolated || fault == nil ||
+		fault.PluginDisabled || fault.Confirmed.IsZero() || s.Trigger.At.After(fault.Confirmed) ||
+		fault.RequestModel == "" || fault.Expected == "" {
+		return time.Time{}
+	}
+	last := fault.Confirmed
+	if s.LastCheck.After(last) {
+		last = s.LastCheck
+	}
+	return last.Add(seconds(cfg.MismatchRecheckSeconds))
+}
+
 func (g *Guard) launch(a Auth, s *AuthState, cfg Config) {
 	p := cfg.Policy(a.ID, a.Provider)
 	model, expect := cfg.Target(p, s.Trigger.Model)
+	if s.Pending == mismatchRecheck {
+		model, expect = s.Abnormal.RequestModel, s.Abnormal.Expected
+	}
 	ctx, cancel := context.WithCancel(g.ctx)
 	j := &job{
 		Probe:  Probe{Auth: a, Model: model, Expected: expect, Probability: cfg.MinProbability, Timeout: seconds(cfg.TimeoutSeconds)},
@@ -141,13 +174,16 @@ func (g *Guard) finish(ctx context.Context, start time.Time, j *job, current Aut
 	if trigger.At.IsZero() {
 		trigger = Trigger{Reason: j.reason, At: start}
 	}
-	if s.LastModel != j.Model || s.LastExpected != j.Expected || s.LastResult.ReferenceBuild != r.ReferenceBuild || r.Status != Mismatch {
+	if j.reason == mismatchRecheck || s.LastModel != j.Model || s.LastExpected != j.Expected || s.LastResult.ReferenceBuild != r.ReferenceBuild || r.Status != Mismatch {
 		s.Consecutive = 0
 	}
 	s.LastCheck, s.LastModel, s.LastExpected, s.LastResult = now, j.Model, j.Expected, r
 	s.Pending, s.Due = "", time.Time{}
 	action := g.applyResult(ctx, now, j, s, trigger, r)
 	g.recordOverload(now, j.Provider, r.Overloaded)
+	if j.reason == mismatchRecheck {
+		trigger = Trigger{Reason: mismatchRecheck, At: start}
+	}
 	g.state.History = append(g.state.History, Record{
 		At: start, AuthID: j.ID, Name: j.Name, Trigger: trigger,
 		Model: j.Model, Expect: j.Expected, Result: r, Millis: now.Sub(start).Milliseconds(), Action: action,
@@ -158,13 +194,17 @@ func (g *Guard) finish(ctx context.Context, start time.Time, j *job, current Aut
 
 func (g *Guard) applyResult(ctx context.Context, now time.Time, j *job, s *AuthState, trigger Trigger, r Result) string {
 	cfg := g.state.Config
+	if j.reason == mismatchRecheck && r.Status != Match {
+		s.Held = true
+		return "recheck_kept_isolated"
+	}
 	switch r.Status {
 	case Match:
-		s.Abnormal = nil
 		if trigger.Model != "" && j.Model != trigger.Model {
 			s.Held = true
 			return "different_model"
 		}
+		s.Abnormal = nil
 		g.release(s)
 		return "matched"
 	case Mismatch:

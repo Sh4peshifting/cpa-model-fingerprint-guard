@@ -223,9 +223,9 @@ plugins:
         # The host may persist inference verification on the first business success.
         # Let the watcher publish that new credential snapshot before probing.
         assert call_business(base)[0] == 200
-        before_probe = wait_for(lambda: next((item for item in get_state(base)["auths"]
-                                             if item["id"] == a and item.get("last_business")), None))
         time.sleep(1.5)
+        before_probe = wait_for(lambda: next((item for item in get_state(base)["auths"]
+                                             if item["id"] == a and item.get("last_business") and not item.get("active")), None))
         Upstream.calls.clear()
         code, body = request(base, API + "/action", "POST", {"action": "check", "ids": [a]})
         assert code == 200 and json.loads(body)["results"][a] == "", (code, body)

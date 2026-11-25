@@ -33,6 +33,7 @@ plugins:
         scan_seconds: 60
         idle_seconds: 1800
         interval_seconds: 21600
+        mismatch_recheck_seconds: 172800
         timeout_seconds: 90
         jitter_seconds: 10
         dedupe_seconds: 10
