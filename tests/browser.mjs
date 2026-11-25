@@ -97,12 +97,20 @@ try {
   await emulateTheme('dark');
   await until(() => evaluate('getComputedStyle(document.documentElement).backgroundColor === "rgb(21, 20, 18)"'));
   await emulateTheme('light');
+  await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+  assert.equal(await evaluate('getComputedStyle(document.querySelector("nav"), "::before").transitionDuration'), '0.2s');
   await evaluate(`(() => {
     const overview = document.querySelector('#tab-overview');
     overview.focus();
     overview.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
   })()`);
   assert(await evaluate('document.activeElement.id === "tab-auth" && !document.getElementById("auth").hidden'));
+  assert.equal(await evaluate('document.querySelector("nav").dataset.activeTab'), 'auth');
+  assert.equal(await evaluate('getComputedStyle(document.getElementById("auth")).animationName'), 'reveal');
+  await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  assert.equal(await evaluate('getComputedStyle(document.getElementById("auth")).animationName'), 'none');
+  assert.equal(await evaluate('getComputedStyle(document.querySelector("nav"), "::before").transitionDuration'), '0s');
+  await emulateTheme('light');
   await evaluate('document.querySelector("[data-tab=settings]").click()');
   assert(await evaluate('document.getElementById("save-settings").disabled'));
   const configured = await evaluate(`(() => {

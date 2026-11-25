@@ -215,6 +215,7 @@ window.setInterval(() => {
 }, 3000);
 const tabs = [...document.querySelectorAll('[role="tab"]')];
 function openTab(tab, focus = false) {
+  tab.parentElement.dataset.activeTab = tab.dataset.tab;
   for (const peer of tabs) {
     const active = peer === tab;
     byId(peer.dataset.tab).hidden = !active;
