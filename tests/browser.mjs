@@ -73,6 +73,29 @@ try {
     if (result.exceptionDetails) throw new Error(result.exceptionDetails.text);
     return result.result.value;
   }
+  async function hover(selector) {
+    const point = await evaluate(`(async () => {
+      const target = document.querySelector(${JSON.stringify(selector)});
+      target.scrollIntoView({ block: 'center', inline: 'center' });
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      const { x, y, width, height } = target.getBoundingClientRect();
+      return { x: x + width / 2, y: y + height / 2 };
+    })()`);
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point });
+  }
+  async function checkDetectionTooltip(selector) {
+    await hover(selector);
+    await until(() => evaluate(`(() => {
+      const tooltip = document.getElementById('detection-tooltip');
+      const anchor = document.querySelector(${JSON.stringify(selector)});
+      const { left, right, top, bottom } = tooltip.getBoundingClientRect();
+      return !tooltip.hidden && tooltip.textContent === anchor.getAttribute('aria-label')
+        && /\\d{1,2}:\\d{2}:\\d{2}/.test(tooltip.textContent)
+        && left >= 0 && right <= innerWidth && top >= 0 && bottom <= innerHeight;
+    })()`));
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 });
+    await until(() => evaluate('document.getElementById("detection-tooltip").hidden'));
+  }
   const emulateTheme = value => send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value }] });
   await emulateTheme('light');
   await send('Emulation.setDeviceMetricsOverride', { width: 1024, height: 768, deviceScaleFactor: 1, mobile: false });
@@ -115,14 +138,12 @@ try {
   await send('Emulation.setFocusEmulationEnabled', { enabled: true });
   await evaluate('document.querySelector("[data-tab=settings]").click()');
   assert(await evaluate('document.getElementById("save-settings").disabled'));
-  const point = await evaluate(`(() => {
-    const tip = document.querySelector('[name="gateway_recheck_seconds"]').closest('.field').querySelector('.field-tip');
-    tip.scrollIntoView({ block: 'center' });
-    const { x, y, width, height } = tip.getBoundingClientRect();
-    return { x: x + width / 2, y: y + height / 2 };
-  })()`);
-  await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point });
-  await until(() => evaluate(`getComputedStyle(document.querySelector('[name="gateway_recheck_seconds"]').closest('.field').querySelector('.field-tooltip')).visibility === 'visible'`));
+  const recoveryField = '.field:has([name="gateway_recheck_seconds"])';
+  const recoveryTip = `getComputedStyle(document.querySelector('${recoveryField} .field-tooltip')).visibility`;
+  await hover(recoveryField + ' label');
+  assert.equal(await evaluate(recoveryTip), 'hidden');
+  await hover(recoveryField + ' .field-tip');
+  await until(async () => await evaluate(recoveryTip) === 'visible');
   const configured = await evaluate(`(() => {
     const input = document.querySelector('input[name="history_limit"]');
     const interval = document.querySelector('input[name="mismatch_recheck_seconds"]');
@@ -174,6 +195,7 @@ try {
   assert(failedSquares > 0);
   assert.match(await evaluate('document.querySelector("#auth-cards .detection-summary")?.textContent'),
     new RegExp('一致 0 / 不一致 0 / 失败 ' + failedSquares + ' · 一致率 0%'));
+  await checkDetectionTooltip('#auth-cards .detection-square');
   await evaluate(`(() => {
     const search = document.getElementById('auth-search');
     search.value = 'no-matching-credential';
@@ -195,29 +217,53 @@ try {
   assert.equal(await evaluate('document.querySelectorAll("#auth-rows tr").length'), 2);
   assert(await evaluate('document.querySelector("#auth thead").textContent.includes("认证 / 提供商")'));
   assert(await evaluate('document.querySelector("#auth thead").textContent.includes("预期 / 识别模型")'));
+  assert.equal(await evaluate('document.querySelector("#auth thead th:nth-child(7)").textContent'), '结果');
+  const badgesAligned = await evaluate(`(() => {
+    const status = document.querySelector('#auth-rows .auth-status');
+    const [state, queue] = status.querySelectorAll('.badge');
+    const enabled = status.querySelector('small');
+    return state.getBoundingClientRect().top === queue.getBoundingClientRect().top
+      && state.getBoundingClientRect().left === enabled.getBoundingClientRect().left;
+  })()`);
+  assert(badgesAligned);
   assert(await evaluate('document.querySelector("#auth-rows input[type=checkbox]").checked'));
   await evaluate('document.getElementById("clear-selection").click()');
   assert(await evaluate('document.getElementById("batch-actions").hidden'));
+  await evaluate('document.querySelector("#auth-rows [data-control=details]").click()');
+  assert(await evaluate('document.getElementById("details-dialog").open'));
+  const detailLabels = await evaluate('Array.from(document.querySelectorAll("#auth-detail-rows dt"), node => node.textContent)');
+  assert.deepEqual(detailLabels, ['触发原因', '触发时间', '下次检测']);
+  assert.equal(await evaluate('document.querySelector("#auth-detail-rows dd").textContent'), 'HTTP 状态');
+  assert(await evaluate('!document.getElementById("auth-rows").textContent.includes("下次检测")'));
+  await evaluate('document.getElementById("close-details").click()');
   await send('Emulation.setDeviceMetricsOverride', { width: 375, height: 760, deviceScaleFactor: 1, mobile: true });
   assert(await evaluate(`(() => {
     const table = document.querySelector('#auth .table-wrap');
     return document.documentElement.scrollWidth === 375 && table.scrollWidth > table.clientWidth;
   })()`));
+  await checkDetectionTooltip('#auth-rows .detection-square');
+  await evaluate('document.querySelector("#auth-rows [data-control=settings]").click()');
+  assert.equal(await evaluate('document.activeElement.name'), 'enabled');
+  const authTip = 'getComputedStyle(document.querySelector("#auth-fields .field-tooltip")).visibility';
+  assert.equal(await evaluate(authTip), 'hidden');
+  await hover('#auth-fields .field-tip');
+  await until(async () => await evaluate(authTip) === 'visible');
   await evaluate(`(() => {
-    document.querySelector('#auth-rows .row-actions button').click();
     const row = document.querySelector('#auth-fields select[name="idle"]');
     row.value = 'false';
     document.getElementById('auth-form').requestSubmit();
   })()`);
   await until(() => evaluate('document.getElementById("notice-text").textContent === "认证设置已保存"'));
+  await evaluate('document.querySelector("#auth-rows [data-control=cancel]").click()');
+  await until(() => evaluate('document.getElementById("notice-text").textContent === "已取消本次检测"'));
+  assert(await evaluate('!document.querySelector("#auth-rows [data-control=cancel], #auth-rows .badge.pending")'));
+  assert(await evaluate('document.querySelector("#auth-rows .badge.isolated")'));
   await evaluate('document.querySelector("[data-tab=history]").click()');
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("#history thead th")).slice(3, 5).map(cell => cell.textContent)'),
     ['测试 / 预期模型', '识别模型']);
   assert(await evaluate('document.getElementById("history-rows").textContent.includes("证据不足")'));
-  assert(await evaluate(`(() => {
-    const cells = document.querySelector('#history-rows tr').cells;
-    return cells[3].textContent.includes(' / ') && cells[6].textContent.includes(' / ');
-  })()`));
+  assert.equal(await evaluate('document.querySelector("#history thead th:nth-child(7)").textContent'), '概率');
+  assert.equal(await evaluate('document.querySelector("#history-rows tr").cells[6].textContent'), '—');
   assert(await evaluate('localStorage.length === 0 && sessionStorage.length === 0'));
   // Use a same-origin host page for the parent. The plugin's policy blocks nested frames.
   await send('Page.navigate', { url: new URL('/healthz', pluginURL).href });

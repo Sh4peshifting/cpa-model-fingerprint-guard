@@ -318,7 +318,8 @@ func (g *Guard) reconcile(now time.Time, auths []Auth) {
 }
 
 var (
-	ErrUnknownAuth = errors.New("认证文件不存在")
-	ErrUnavailable = errors.New("当前认证或操作不可用")
-	ErrConflict    = errors.New("配置已变更，请刷新后重试")
+	ErrUnknownAuth   = errors.New("认证文件不存在")
+	ErrUnavailable   = errors.New("当前认证或操作不可用")
+	ErrNoQueuedProbe = errors.New("该认证没有可取消的待检测任务")
+	ErrConflict      = errors.New("配置已变更，请刷新后重试")
 )

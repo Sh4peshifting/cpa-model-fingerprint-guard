@@ -193,6 +193,7 @@ window.setInterval(() => {
 }, 3000);
 const tabs = [...document.querySelectorAll('[role="tab"]')];
 function openTab(tab, focus = false) {
+  hideDetectionTooltip();
   tab.parentElement.dataset.activeTab = tab.dataset.tab;
   for (const peer of tabs) {
     const active = peer === tab;
@@ -262,7 +263,7 @@ function render() {
     ['检测中', auths.filter(a => a.running).length, 'probe'],
     ['待检测', auths.filter(a => a.pending && !a.running).length, 'history'],
     ['宿主冷却', auths.filter(a => a.cooling && !a.disabled).length, 'probe'],
-    ['待人工处理', auths.filter(a => a.held && !a.disabled && !a.pending && !a.next_recheck).length, 'alert'],
+    ['待人工处理', auths.filter(a => a.held && !a.disabled && !a.pending && !a.next_recheck && !a.next_probe).length, 'alert'],
   ];
   byId('metrics').replaceChildren(...metrics.map(([label, value, glyph]) => {
     const card = element('div', null, { class: 'metric' });
@@ -354,21 +355,22 @@ function credentialParts(a) {
   checkbox.onchange = () => setSelection([a], checkbox.checked);
   const identity = element('div', null, { class: 'auth-identity' });
   identity.append(element('strong', a.name), element('small', a.provider));
-  const status = element('div');
+  const status = element('div', null, { class: 'auth-status' });
+  const badges = element('div', null, { class: 'auth-status-badges' });
   const state = stateName(a);
-  status.append(badge(translate(state), state));
-  if (a.running) status.append(badge('检测中', 'pending'));
-  else if (a.pending) status.append(badge(a.pending === 'gateway_recheck' ? '待恢复复检' : '待检测', 'pending'));
-  else if (a.next_recheck && !a.disabled) status.append(badge('待复检', 'pending'));
-  status.append(element('small', (a.policy.enabled ? '检测开启' : '检测关闭') +
-    (a.held && !a.pending && !a.next_recheck && !a.running ? ' · 待人工' : !a.probeable ? ' · 诊断不可用' : '')));
-  const result = element('div');
+  badges.append(badge(translate(state), state));
+  if (a.running) badges.append(badge('检测中', 'pending'));
+  else if (a.pending) badges.append(badge(a.pending === 'gateway_recheck' ? '待恢复复检' : '待检测', 'pending'));
+  else if (a.next_recheck && !a.disabled) badges.append(badge('待复检', 'pending'));
+  status.append(badges, element('small', (a.policy.enabled ? '检测开启' : '检测关闭') +
+    (a.held && !a.pending && !a.next_recheck && !a.next_probe && !a.running ? ' · 待人工' : !a.probeable ? ' · 诊断不可用' : '')));
+  const result = element('div', null, { class: 'auth-result' });
   result.append(resultBadge(a.last_result?.status));
-  if (a.trigger?.at) result.append(element('small', translate(a.trigger.reason) + ' · ' + localTime(a.trigger.at)));
-  if (a.abnormal?.confirmed_at) result.append(element('small', '确认 ' + localTime(a.abnormal.confirmed_at)));
-  if (!a.running) {
-    if (a.next_probe && a.pending !== 'recheck') result.append(element('small', '下次检测 ' + localTime(a.next_probe)));
-    else if (a.next_recheck) result.append(element('small', '下次复检 ' + localTime(a.next_recheck)));
+  if (a.trigger?.at || a.abnormal?.confirmed_at || a.next_probe || a.next_recheck) {
+    const details = actionButton('详情', 'details', 'info', () => showAuthDetails(a.id));
+    details.className = 'ghost';
+    details.setAttribute('aria-label', a.name + ' 的检测详情');
+    result.append(details);
   }
   const expected = a.last_expected || a.policy.expected || view.config.expected_models?.[a.policy.model] || a.policy.model;
   const models = element('div');
@@ -377,12 +379,39 @@ function credentialParts(a) {
   actions.append(
     actionButton('设置', 'settings', 'settings', () => editAuth(a)),
     actionButton('检测', 'check', 'probe', () => action('check', [a.id]), a.disabled || !a.policy.enabled || !a.probeable || a.running),
+  );
+  if (a.pending && !a.running) actions.append(actionButton('取消检测', 'cancel', 'close', () => action('cancel', [a.id])));
+  actions.append(
     a.isolated
       ? actionButton('解除隔离', 'release', 'unlock', () => action('release', [a.id], true))
       : actionButton('隔离', 'isolate', 'lock', () => action('isolate', [a.id], true), a.disabled),
   );
   return { checkbox, identity, status, models, result, actions };
 }
+const detectionTooltip = byId('detection-tooltip');
+function hideDetectionTooltip() {
+  detectionTooltip.hidden = true;
+}
+byId('auth').addEventListener('pointerover', event => {
+  const square = event.target.closest('.detection-square');
+  if (!square || event.pointerType === 'touch') return;
+  detectionTooltip.textContent = square.getAttribute('aria-label');
+  detectionTooltip.hidden = false;
+  const anchor = square.getBoundingClientRect();
+  const { width, height } = detectionTooltip.getBoundingClientRect();
+  const edge = 8;
+  const center = anchor.left + anchor.width / 2;
+  const left = Math.max(edge, Math.min(center - width / 2, document.documentElement.clientWidth - width - edge));
+  const above = anchor.top - height - edge;
+  detectionTooltip.style.left = left + 'px';
+  detectionTooltip.style.top = (above >= edge ? above : anchor.bottom + edge) + 'px';
+});
+byId('auth').addEventListener('pointerout', event => {
+  if (event.target.closest('.detection-square')) hideDetectionTooltip();
+});
+document.addEventListener('scroll', hideDetectionTooltip, { capture: true, passive: true });
+window.addEventListener('resize', hideDetectionTooltip);
+
 function detectionSummary(records = []) {
   if (!records.length) return element('small', '暂无检测记录');
   const summary = element('div', null, { class: 'detection-summary' });
@@ -396,7 +425,7 @@ function detectionSummary(records = []) {
   });
   for (let i = Math.min(records.length, 16) - 1; i >= 0; i--) {
     const label = localTime(records[i].at) + ' · ' + translate(records[i].result.status);
-    squares.append(element('span', null, { class: outcomes[i], title: label, 'aria-label': label, role: 'img' }));
+    squares.append(element('span', null, { class: 'detection-square ' + outcomes[i], 'aria-label': label, role: 'img' }));
   }
   const rate = new Intl.NumberFormat('zh-CN', { style: 'percent', maximumFractionDigits: 1 }).format(counts.match / records.length);
   summary.append(squares, element('small',
@@ -408,7 +437,7 @@ function credential(a, records) {
   const { checkbox, identity, status, models, result, actions } = credentialParts(a);
   const information = [
     ['最后业务', localTime(a.last_business)], ['最后检测', localTime(a.last_check)],
-    ['预期 / 识别模型', models], ['结果 / 隔离', result], ['检测记录', detectionSummary(records)],
+    ['预期 / 识别模型', models], ['结果', result], ['检测记录', detectionSummary(records)],
   ];
   if (authLayout === 'table') {
     const row = element('tr', null, { 'data-auth': a.id });
@@ -435,6 +464,8 @@ function credential(a, records) {
 }
 function renderAuth() {
   if (!view) return;
+  hideDetectionTooltip();
+  if (detailsDialog.open) renderAuthDetails();
   const valid = new Set(view.auths.map(a => a.id));
   for (const id of selected) if (!valid.has(id)) selected.delete(id);
   const auths = filteredAuths();
@@ -465,6 +496,39 @@ function renderAuth() {
   }
   showEmpty('auth', auths, view.auths.length);
 }
+
+const detailsDialog = byId('details-dialog');
+let detailsAuthId;
+function renderAuthDetails() {
+  const auth = view.auths.find(item => item.id === detailsAuthId);
+  if (!auth) {
+    detailsDialog.close();
+    return false;
+  }
+  byId('details-name').textContent = auth.name;
+  const rows = [];
+  if (auth.trigger?.at) {
+    rows.push(['触发原因', translate(auth.trigger.reason)], ['触发时间', localTime(auth.trigger.at)]);
+  }
+  if (auth.abnormal?.confirmed_at) rows.push(['确认时间', localTime(auth.abnormal.confirmed_at)]);
+  if (!auth.running && auth.next_probe && auth.pending !== 'recheck') {
+    rows.push([auth.pending ? '下次检测' : '下次恢复复检', localTime(auth.next_probe)]);
+  } else if (!auth.running && auth.next_recheck) {
+    rows.push(['下次复检', localTime(auth.next_recheck)]);
+  }
+  byId('auth-detail-rows').replaceChildren(...rows.flatMap(([label, value]) => [element('dt', label), element('dd', value)]));
+  byId('auth-detail-empty').hidden = rows.length > 0;
+  return true;
+}
+function showAuthDetails(id) {
+  detailsAuthId = id;
+  if (renderAuthDetails()) detailsDialog.showModal();
+}
+byId('close-details').onclick = () => detailsDialog.close();
+detailsDialog.addEventListener('close', () => {
+  const trigger = document.querySelector('[data-auth="' + CSS.escape(detailsAuthId) + '"] [data-control="details"]');
+  (trigger || byId('auth-search')).focus({ preventScroll: true });
+});
 for (const button of document.querySelectorAll('[data-layout]')) {
   button.onclick = () => {
     authLayout = button.dataset.layout;
@@ -494,7 +558,7 @@ function renderHistory() {
   const rows = history.map(row => {
     const tr = element('tr');
     for (const value of [localTime(row.at), row.name, translate(row.trigger.reason), row.model + ' / ' + row.expected,
-      row.result.detected || '—', resultBadge(row.result.status), numberText(row.result.score) + ' / ' + numberText(row.result.probability),
+      row.result.detected || '—', resultBadge(row.result.status), numberText(row.result.probability),
       (row.duration_ms / 1000).toFixed(2) + ' 秒', translate(row.action)]) {
       const cell = element('td');
       cell.append(value);
@@ -581,6 +645,7 @@ function confirmAction(title, detail) {
 }
 const actionLabels = {
   check: ['发起检测', '检测任务已受理'],
+  cancel: ['取消检测', '已取消本次检测'],
   isolate: ['隔离认证', '已隔离认证'],
   release: ['解除隔离', '已解除插件隔离'],
 };
@@ -718,6 +783,7 @@ function field(container, name, spec, value, inherit = false) {
   input.name = name;
   input.dataset.type = type;
   input.setAttribute('aria-describedby', tipId);
+  input.autofocus = inherit && name === 'enabled';
   tip.onkeydown = event => {
     if (event.key !== 'Escape') return;
     event.preventDefault();

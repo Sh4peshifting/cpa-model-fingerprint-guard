@@ -364,7 +364,6 @@ tbody tr:last-child td { border-bottom: 0; }
 
 .badge.normal { background: var(--success-bg); color: var(--success-text); }
 .badge.pending { background: var(--info-bg); color: var(--info-text); }
-.badge + .badge { margin-inline-start: 4px; }
 .badge.isolated, .badge.cooling { background: var(--warning-bg); color: var(--warning-text); }
 .badge.disabled { background: var(--error-bg); color: var(--error-text); }
 .row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -376,7 +375,18 @@ td .row-actions { min-width: 210px; }
 .auth-card:has(input:checked) { border-color: var(--action); }
 .auth-heading { display: flex; align-items: center; gap: 8px; }
 .auth-identity { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.auth-heading > :last-child { flex-shrink: 0; text-align: end; }
+.auth-status { display: grid; gap: 4px; }
+.auth-status-badges { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+#auth-table .auth-status-badges { flex-wrap: nowrap; }
+.auth-status small { margin: 0; }
+.auth-heading .auth-status { max-width: 57%; text-align: end; }
+.auth-heading .auth-status-badges { justify-content: flex-end; }
+.auth-result { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; }
+.auth-result button { padding: 2px 4px; min-height: 26px; font-size: 12px; }
+#details-name { overflow-wrap: anywhere; }
+.auth-detail-rows { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 10px 16px; margin: 0; }
+.auth-detail-rows dt { color: var(--muted); }
+.auth-detail-rows dd { margin: 0; overflow-wrap: anywhere; }
 .auth-details {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -392,15 +402,21 @@ td .row-actions { min-width: 210px; }
 .auth-details dd { margin: 4px 0 0; }
 .auth-details > :last-child { grid-column: 1 / -1; }
 .detection-squares { display: flex; flex-wrap: wrap; gap: 3px; min-width: 125px; }
-.detection-squares span {
-  width: 8px;
-  height: 8px;
+.detection-square {
+  width: 10px;
+  height: 10px;
   border-radius: 2px;
   background: var(--warning-text);
 }
 .detection-squares .match { background: var(--success-text); }
 .detection-squares .mismatch { background: var(--error-text); }
 .detection-summary small { font-size: 11px; }
+.detection-tooltip {
+  position: fixed;
+  z-index: 10;
+  max-width: calc(100vw - 16px);
+  pointer-events: none;
+}
 
 .fields {
   display: grid;
@@ -415,13 +431,8 @@ td .row-actions { min-width: 210px; }
 .field > :is(input, select, textarea) { width: 100%; min-width: 0; }
 .field-title { position: relative; display: flex; align-items: center; gap: 5px; min-height: 22px; }
 .field-tip { flex: none; width: 22px; min-height: 22px; padding: 0; }
-.field-tooltip {
-  position: absolute;
-  z-index: 3;
-  inset-block-start: calc(100% + 4px);
-  inset-inline-start: 0;
+.field-tooltip, .detection-tooltip {
   width: max-content;
-  max-width: min(100%, 280px);
   padding: 6px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -429,10 +440,18 @@ td .row-actions { min-width: 210px; }
   box-shadow: 0 4px 16px rgb(0 0 0 / .14);
   color: var(--text);
   font-size: 12px;
+}
+.field-tooltip {
+  position: absolute;
+  z-index: 3;
+  inset-block-start: calc(100% + 4px);
+  inset-inline-start: 0;
+  max-width: min(100%, 280px);
+  pointer-events: none;
   visibility: hidden;
   opacity: 0;
 }
-.field-title:hover .field-tooltip, .field-tip:focus + .field-tooltip { visibility: visible; opacity: 1; }
+.field-tip:hover + .field-tooltip, .field-tip:focus-visible + .field-tooltip { visibility: visible; opacity: 1; }
 fieldset { min-width: 0; border: 1px solid var(--control-border); border-radius: 8px; padding: 12px; }
 legend { padding-inline: 4px; font-weight: 600; }
 textarea { resize: vertical; font-family: ui-monospace, monospace; }

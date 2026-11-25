@@ -26,6 +26,12 @@ func (g *Guard) schedule(now time.Time, scan bool) {
 			continue
 		}
 		triggerDisabled := s.Isolated && s.Trigger.Reason != "manual" && !p.Trigger
+		if s.Pending == "" && a.Probeable {
+			if due := s.gatewayResumeAt(cfg); !due.IsZero() && !now.Before(due) {
+				s.Pending, s.Due, s.GatewaySkippedAt = gatewayRecheck, due, time.Time{}
+				g.dirty = true
+			}
+		}
 		if scan && (s.Pending == "" || triggerDisabled && s.Pending == "confirm") {
 			if due := mismatchRecheckDue(a, s, p, cfg); !due.IsZero() && !now.Before(due) {
 				s.Pending, s.Due, s.Retries = mismatchRecheck, due, 0
@@ -100,10 +106,21 @@ func (s *AuthState) probeDue(a Auth) time.Time {
 	return due
 }
 
+func (s *AuthState) gatewayResumeAt(cfg Config) time.Time {
+	if s.GatewaySkippedAt.IsZero() || !s.Isolated || !s.Trigger.isBusiness() {
+		return time.Time{}
+	}
+	return s.GatewaySkippedAt.Add(seconds(cfg.GatewayRecheckSeconds))
+}
+
 func (g *Guard) idle(now time.Time, id string, s *AuthState, cfg Config) bool {
+	last := s.LastCheck
+	if s.IdleSkippedAt.After(last) {
+		last = s.IdleSkippedAt
+	}
 	return g.active[id] == 0 && !now.Before(s.WatchUntil) &&
 		now.Sub(s.LastBusiness) >= seconds(cfg.IdleSeconds) &&
-		now.Sub(s.LastCheck) >= seconds(cfg.IntervalSeconds)
+		now.Sub(last) >= seconds(cfg.IntervalSeconds)
 }
 
 func mismatchRecheckDue(a Auth, s *AuthState, p Policy, cfg Config) time.Time {
@@ -116,6 +133,9 @@ func mismatchRecheckDue(a Auth, s *AuthState, p Policy, cfg Config) time.Time {
 	last := fault.Confirmed
 	if s.LastCheck.After(last) {
 		last = s.LastCheck
+	}
+	if s.RecheckSkippedAt.After(last) {
+		last = s.RecheckSkippedAt
 	}
 	return last.Add(seconds(cfg.MismatchRecheckSeconds))
 }
@@ -357,6 +377,7 @@ func (g *Guard) recordOverload(now time.Time, provider string, overload bool) {
 func (g *Guard) release(s *AuthState) {
 	s.Isolated, s.Held, s.Retries, s.Consecutive = false, false, 0, 0
 	s.Trigger, s.Pending, s.Due, s.GatewayFailures, s.ProbeCooldown = Trigger{}, "", time.Time{}, 0, time.Time{}
+	s.RecheckSkippedAt, s.GatewaySkippedAt = time.Time{}, time.Time{}
 }
 
 func (g *Guard) trimHistory() {

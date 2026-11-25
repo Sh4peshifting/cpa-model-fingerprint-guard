@@ -78,7 +78,7 @@ func (p *runtime) manage(r pluginapi.ManagementRequest) pluginapi.ManagementResp
 			return errorResponse(400, "一次可操作 1 至 250 项认证")
 		}
 		switch in.Action {
-		case "check", "isolate", "release":
+		case "check", "cancel", "isolate", "release":
 		default:
 			return errorResponse(400, "未知操作")
 		}
@@ -143,7 +143,7 @@ func publicError(err error) string {
 	switch {
 	case err == nil:
 		return ""
-	case errors.Is(err, guard.ErrUnknownAuth), errors.Is(err, guard.ErrUnavailable), errors.Is(err, guard.ErrConflict):
+	case errors.Is(err, guard.ErrUnknownAuth), errors.Is(err, guard.ErrUnavailable), errors.Is(err, guard.ErrConflict), errors.Is(err, guard.ErrNoQueuedProbe):
 		return err.Error()
 	default:
 		return "操作失败，请检查守卫状态或宿主日志"

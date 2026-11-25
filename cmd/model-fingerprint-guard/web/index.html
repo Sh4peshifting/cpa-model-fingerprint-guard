@@ -176,7 +176,7 @@
       </div>
       <div id="auth-cards" class="auth-grid"></div>
       <div id="auth-table" class="table-wrap" role="region" aria-label="认证列表" tabindex="0" hidden><table>
-        <thead><tr><th scope="col">选择</th><th scope="col">认证 / 提供商</th><th scope="col">检测 / 调度</th><th scope="col">最后业务</th><th scope="col">最后检测</th><th scope="col">预期 / 识别模型</th><th scope="col">结果 / 隔离</th><th scope="col">检测记录</th><th scope="col">操作</th></tr></thead>
+        <thead><tr><th scope="col">选择</th><th scope="col">认证 / 提供商</th><th scope="col">检测 / 调度</th><th scope="col">最后业务</th><th scope="col">最后检测</th><th scope="col">预期 / 识别模型</th><th scope="col">结果</th><th scope="col">检测记录</th><th scope="col">操作</th></tr></thead>
         <tbody id="auth-rows"></tbody>
       </table></div>
       <div id="auth-empty" hidden></div>
@@ -200,13 +200,20 @@
       </div>
       <p class="collection-tools" id="history-count" role="status"></p>
       <div id="history-table" class="table-wrap" role="region" aria-label="检测记录列表" tabindex="0"><table>
-        <thead><tr><th scope="col">检测时间</th><th scope="col">认证文件</th><th scope="col">触发原因</th><th scope="col">测试 / 预期模型</th><th scope="col">识别模型</th><th scope="col">结果</th><th scope="col">排名分数 / 概率</th><th scope="col">耗时</th><th scope="col">处理结果</th></tr></thead>
+        <thead><tr><th scope="col">检测时间</th><th scope="col">认证文件</th><th scope="col">触发原因</th><th scope="col">测试 / 预期模型</th><th scope="col">识别模型</th><th scope="col">结果</th><th scope="col">概率</th><th scope="col">耗时</th><th scope="col">处理结果</th></tr></thead>
         <tbody id="history-rows"></tbody>
       </table></div>
       <div id="history-empty" hidden></div>
     </section>
   </div>
 </main>
+<div id="detection-tooltip" class="detection-tooltip" role="tooltip" hidden></div>
+<dialog id="details-dialog" aria-labelledby="details-name">
+  <h2 id="details-name"></h2>
+  <dl class="auth-detail-rows" id="auth-detail-rows"></dl>
+  <p id="auth-detail-empty" hidden>暂无触发、确认或计划检测记录。</p>
+  <div class="dialog-actions"><button type="button" id="close-details" autofocus>关闭</button></div>
+</dialog>
 <dialog id="auth-dialog" aria-labelledby="auth-name">
   <form id="auth-form">
     <h2 id="auth-name"></h2>

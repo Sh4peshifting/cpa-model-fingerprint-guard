@@ -354,10 +354,17 @@ plugins:
             script = Path(__file__).with_name("browser.mjs")
             with run_access_proxy(host_port) as access_base:
                 subprocess.run(["node", str(script), base, access_base], check=True, timeout=40)
+        else:
+            code, body = request(base, API + "/action", "POST", {"action": "cancel", "ids": [a]})
+            assert code == 200 and json.loads(body)["results"][a] == "", (code, body)
+        cancelled = next(x for x in get_state(base)["auths"] if x["id"] == a)
+        assert cancelled["isolated"] and cancelled["held"] and not cancelled.get("pending"), cancelled
+        code, body = request(base, API + "/action", "POST", {"action": "cancel", "ids": [a]})
+        assert code == 200 and json.loads(body)["results"][a] == "该认证没有可取消的待检测任务", (code, body)
         test_live_plugin_config(base, a)
     with run_host(host, tmp):
         restored = wait_for(lambda: next((s for s in [get_state(base)] if s and len(s["auths"]) == 2), None))
-        assert any(x["id"] == a and x["isolated"] for x in restored["auths"])
+        assert any(x["id"] == a and x["isolated"] and not x.get("pending") for x in restored["auths"])
         assert call_business(base)[0] == 200
         assert Upstream.calls[-1][0] == "Bearer fixture-upstream-b"
         Upstream.sse_faults.add("Bearer fixture-upstream-b")

@@ -58,9 +58,10 @@ func loadState(path string, initial Config) (state, error) {
 		}
 		// Older history lacked the probe HTTP status. For an exhausted gateway
 		// quarantine, resume with the original business model and regular checks.
-		if a.Isolated && a.Held && a.Abnormal == nil && a.Pending == "" && a.Retries >= s.Config.MaxRetries &&
+		if a.Isolated && a.Held && a.Abnormal == nil && a.Pending == "" && a.GatewaySkippedAt.IsZero() && a.Retries >= s.Config.MaxRetries &&
 			a.Trigger.isBusiness() && isGatewayStatus(a.Trigger.Status) && a.Trigger.Model != "" &&
-			a.LastResult.Status == Transient && a.LastResult.Reason == "upstream_failure" && a.LastResult.HTTPStatus == 0 && !a.LastCheck.IsZero() {
+			a.LastResult.Status == Transient && a.LastResult.Reason == "upstream_failure" && a.LastResult.HTTPStatus == 0 &&
+			!a.LastCheck.IsZero() && !a.LastCheck.Before(a.Trigger.At) {
 			a.Pending, a.Due = gatewayRecheck, a.LastCheck.Add(seconds(s.Config.GatewayRecheckSeconds))
 		}
 	}
