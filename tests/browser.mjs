@@ -255,9 +255,10 @@ try {
   })()`);
   await until(() => evaluate('document.getElementById("notice-text").textContent === "认证设置已保存"'));
   await evaluate('document.querySelector("#auth-rows [data-control=cancel]").click()');
-  await until(() => evaluate('document.getElementById("notice-text").textContent === "已取消本次检测"'));
+  await until(() => evaluate('document.getElementById("notice-text").textContent === "已取消检测"'));
   assert(await evaluate('!document.querySelector("#auth-rows [data-control=cancel], #auth-rows .badge.pending")'));
   assert(await evaluate('document.querySelector("#auth-rows .badge.isolated")'));
+  assert.match(await evaluate('document.querySelector("#auth-rows .auth-status").textContent'), /待人工处理/);
   await evaluate('document.querySelector("[data-tab=history]").click()');
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("#history thead th")).slice(3, 5).map(cell => cell.textContent)'),
     ['测试 / 预期模型', '识别模型']);

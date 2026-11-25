@@ -363,7 +363,7 @@ function credentialParts(a) {
   else if (a.pending) badges.append(badge(a.pending === 'gateway_recheck' ? '待恢复复检' : '待检测', 'pending'));
   else if (a.next_recheck && !a.disabled) badges.append(badge('待复检', 'pending'));
   status.append(badges, element('small', (a.policy.enabled ? '检测开启' : '检测关闭') +
-    (a.held && !a.pending && !a.next_recheck && !a.next_probe && !a.running ? ' · 待人工' : !a.probeable ? ' · 诊断不可用' : '')));
+    (a.held && !a.pending && !a.next_recheck && !a.next_probe && !a.running ? ' · 待人工处理' : !a.probeable ? ' · 诊断不可用' : '')));
   const result = element('div', null, { class: 'auth-result' });
   result.append(resultBadge(a.last_result?.status));
   if (a.trigger?.at || a.abnormal?.confirmed_at || a.next_probe || a.next_recheck) {
@@ -380,7 +380,13 @@ function credentialParts(a) {
     actionButton('设置', 'settings', 'settings', () => editAuth(a)),
     actionButton('检测', 'check', 'probe', () => action('check', [a.id]), a.disabled || !a.policy.enabled || !a.probeable || a.running),
   );
-  if (a.pending && !a.running) actions.append(actionButton('取消检测', 'cancel', 'close', () => action('cancel', [a.id])));
+  if ((a.pending || a.next_recheck) && !a.running) {
+    const cancel = actionButton('取消检测', 'cancel', 'close', () => action('cancel', [a.id]));
+    if (a.pending === 'recheck' || a.pending === 'gateway_recheck' || !a.pending) {
+      cancel.title = '取消自动复检，保持隔离并等待人工处理';
+    }
+    actions.append(cancel);
+  }
   actions.append(
     a.isolated
       ? actionButton('解除隔离', 'release', 'unlock', () => action('release', [a.id], true))
@@ -512,7 +518,7 @@ function renderAuthDetails() {
   }
   if (auth.abnormal?.confirmed_at) rows.push(['确认时间', localTime(auth.abnormal.confirmed_at)]);
   if (!auth.running && auth.next_probe && auth.pending !== 'recheck') {
-    rows.push([auth.pending ? '下次检测' : '下次恢复复检', localTime(auth.next_probe)]);
+    rows.push(['下次检测', localTime(auth.next_probe)]);
   } else if (!auth.running && auth.next_recheck) {
     rows.push(['下次复检', localTime(auth.next_recheck)]);
   }
@@ -645,7 +651,7 @@ function confirmAction(title, detail) {
 }
 const actionLabels = {
   check: ['发起检测', '检测任务已受理'],
-  cancel: ['取消检测', '已取消本次检测'],
+  cancel: ['取消检测', '已取消检测'],
   isolate: ['隔离认证', '已隔离认证'],
   release: ['解除隔离', '已解除插件隔离'],
 };

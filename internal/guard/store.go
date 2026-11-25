@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 type state struct {
@@ -56,9 +57,24 @@ func loadState(path string, initial Config) (state, error) {
 		if id == "" || a == nil {
 			return state{}, errors.New("守卫认证状态无效")
 		}
+		if a.Isolated && a.CancelledRecheck == "" {
+			switch {
+			case !a.LegacyRecheckSkippedAt.IsZero() && a.Abnormal != nil:
+				a.CancelledRecheck = mismatchRecheck
+			case !a.LegacyGatewaySkippedAt.IsZero() && a.Trigger.isBusiness():
+				a.CancelledRecheck = gatewayRecheck
+			}
+		}
+		if a.CancelledRecheck != "" {
+			a.Held = a.Isolated
+			if a.Pending != "manual" {
+				a.Pending, a.Due = "", time.Time{}
+			}
+		}
+		a.LegacyRecheckSkippedAt, a.LegacyGatewaySkippedAt = time.Time{}, time.Time{}
 		// Older history lacked the probe HTTP status. For an exhausted gateway
 		// quarantine, resume with the original business model and regular checks.
-		if a.Isolated && a.Held && a.Abnormal == nil && a.Pending == "" && a.GatewaySkippedAt.IsZero() && a.Retries >= s.Config.MaxRetries &&
+		if a.Isolated && a.Held && a.Abnormal == nil && a.Pending == "" && a.CancelledRecheck == "" && a.Retries >= s.Config.MaxRetries &&
 			a.Trigger.isBusiness() && isGatewayStatus(a.Trigger.Status) && a.Trigger.Model != "" &&
 			a.LastResult.Status == Transient && a.LastResult.Reason == "upstream_failure" && a.LastResult.HTTPStatus == 0 &&
 			!a.LastCheck.IsZero() && !a.LastCheck.Before(a.Trigger.At) {

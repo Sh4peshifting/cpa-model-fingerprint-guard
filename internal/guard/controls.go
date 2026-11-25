@@ -40,9 +40,10 @@ func (g *Guard) View() View {
 	for id, a := range g.inventory {
 		s := g.state.Auths[id]
 		p := g.state.Config.Policy(id, a.Provider)
-		due := s.gatewayResumeAt(g.state.Config)
-		if s.Pending != "" || !due.IsZero() {
-			for _, wait := range []time.Time{s.probeDue(a), g.pauses[""], g.pauses[a.Provider]} {
+		var due time.Time
+		if s.Pending != "" {
+			due = s.probeDue(a)
+			for _, wait := range []time.Time{g.pauses[""], g.pauses[a.Provider]} {
 				if wait.After(due) {
 					due = wait
 				}
@@ -156,23 +157,28 @@ func (g *Guard) Act(action, id string) error {
 		if g.running[id] != nil || s.Pending == "error" {
 			return nil
 		}
-		if s.Pending == gatewayRecheck || !s.gatewayResumeAt(g.state.Config).IsZero() {
-			s.Pending, s.Due, s.GatewaySkippedAt = gatewayRecheck, now, time.Time{}
+		if s.Pending == gatewayRecheck {
+			s.Due = now
 		} else {
 			s.Pending, s.Due, s.Retries, s.GatewayFailures = "manual", now, 0, 0
 		}
 	case "cancel":
-		if s.Pending == "" || g.running[id] != nil {
+		if g.running[id] != nil {
+			return ErrNoQueuedProbe
+		}
+		pending := s.Pending
+		if pending == "" && !mismatchRecheckDue(a, s, p, g.state.Config).IsZero() {
+			pending = mismatchRecheck
+		}
+		if pending == "" {
 			return ErrNoQueuedProbe
 		}
 		previous := *s
-		switch s.Pending {
+		switch pending {
 		case "idle":
 			s.IdleSkippedAt = now
-		case mismatchRecheck:
-			s.RecheckSkippedAt = now
-		case gatewayRecheck:
-			s.GatewaySkippedAt = now
+		case mismatchRecheck, gatewayRecheck:
+			s.CancelledRecheck = pending
 		}
 		s.Pending, s.Due = "", time.Time{}
 		s.Retries, s.Consecutive, s.GatewayFailures = 0, 0, 0
