@@ -41,7 +41,10 @@ func loadState(path string, initial Config) (state, error) {
 	}
 	dec := json.NewDecoder(io.LimitReader(file, maxStateBytes))
 	// Older state files inherit the new interval without resetting other fields.
-	s = state{Config: Config{MismatchRecheckSeconds: initial.MismatchRecheckSeconds}}
+	s = state{Config: Config{
+		MismatchRecheckSeconds: initial.MismatchRecheckSeconds,
+		GatewayRecheckSeconds:  initial.GatewayRecheckSeconds, ParallelChallenges: initial.ParallelChallenges,
+	}}
 	if err := dec.Decode(&s); err != nil {
 		return state{}, fmt.Errorf("读取守卫状态: %w", err)
 	}
@@ -52,6 +55,13 @@ func loadState(path string, initial Config) (state, error) {
 	for id, a := range s.Auths {
 		if id == "" || a == nil {
 			return state{}, errors.New("守卫认证状态无效")
+		}
+		// Older history lacked the probe HTTP status. For an exhausted gateway
+		// quarantine, resume with the original business model and regular checks.
+		if a.Isolated && a.Held && a.Abnormal == nil && a.Pending == "" && a.Retries >= s.Config.MaxRetries &&
+			a.Trigger.isBusiness() && isGatewayStatus(a.Trigger.Status) && a.Trigger.Model != "" &&
+			a.LastResult.Status == Transient && a.LastResult.Reason == "upstream_failure" && a.LastResult.HTTPStatus == 0 && !a.LastCheck.IsZero() {
+			a.Pending, a.Due = gatewayRecheck, a.LastCheck.Add(seconds(s.Config.GatewayRecheckSeconds))
 		}
 	}
 	return s, s.Config.Validate()

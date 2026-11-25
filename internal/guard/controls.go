@@ -1,7 +1,7 @@
 package guard
 
 import (
-	"context"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -14,6 +14,7 @@ type AuthView struct {
 	Running     bool      `json:"running"`
 	Active      int       `json:"active"`
 	NextRecheck time.Time `json:"next_recheck,omitzero"`
+	NextProbe   time.Time `json:"next_probe,omitzero"`
 }
 
 type View struct {
@@ -22,7 +23,6 @@ type View struct {
 	Auths          []AuthView `json:"auths"`
 	History        []Record   `json:"history"`
 	Models         []string   `json:"models"`
-	CanMutate      bool       `json:"can_mutate"`
 	StorageError   bool       `json:"storage_error"`
 	InventoryError bool       `json:"inventory_error"`
 	OverloadUntil  time.Time  `json:"overload_until,omitzero"`
@@ -34,15 +34,25 @@ func (g *Guard) View() View {
 	v := View{
 		Config: g.state.Config, Revision: g.state.Revision,
 		Auths: make([]AuthView, 0, len(g.inventory)), History: append([]Record{}, g.state.History...),
-		Models: g.detector.Models(), CanMutate: g.host.CanMutate(),
+		Models:       g.detector.Models(),
 		StorageError: g.storageErr, InventoryError: g.listErr, OverloadUntil: g.pauses[""],
 	}
 	for id, a := range g.inventory {
 		s := g.state.Auths[id]
 		p := g.state.Config.Policy(id, a.Provider)
+		var due time.Time
+		if s.Pending != "" {
+			due = s.probeDue(a)
+			for _, wait := range []time.Time{g.pauses[""], g.pauses[a.Provider]} {
+				if wait.After(due) {
+					due = wait
+				}
+			}
+		}
 		v.Auths = append(v.Auths, AuthView{
 			Auth: a, AuthState: *s, Policy: p, Running: g.running[id] != nil, Active: g.active[id],
 			NextRecheck: mismatchRecheckDue(a, s, p, g.state.Config),
+			NextProbe:   due,
 		})
 	}
 	slices.SortFunc(v.Auths, func(a, b AuthView) int {
@@ -95,6 +105,17 @@ func (g *Guard) updateConfig(revision uint64, cfg Config) error {
 	next := g.state
 	next.Config = cfg
 	next.Revision++
+	oldInterval := seconds(g.state.Config.GatewayRecheckSeconds)
+	if interval := seconds(cfg.GatewayRecheckSeconds); interval != oldInterval {
+		next.Auths = maps.Clone(g.state.Auths)
+		for id, a := range next.Auths {
+			if a.Pending == gatewayRecheck && a.Due.Equal(a.LastCheck.Add(oldInterval)) {
+				updated := *a
+				updated.Due = a.LastCheck.Add(interval)
+				next.Auths[id] = &updated
+			}
+		}
+	}
 	// A failed configuration write does not change the active configuration.
 	if err := saveState(g.path, next); err != nil {
 		g.storageErr = true
@@ -115,7 +136,7 @@ func (g *Guard) updateConfig(revision uint64, cfg Config) error {
 	return nil
 }
 
-func (g *Guard) Act(ctx context.Context, action, id string) error {
+func (g *Guard) Act(action, id string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	a, known := g.inventory[id]
@@ -125,7 +146,7 @@ func (g *Guard) Act(ctx context.Context, action, id string) error {
 	s := g.state.Auths[id]
 	p := g.state.Config.Policy(id, a.Provider)
 	now := g.now().UTC()
-	if a.Disabled && action != "recover" && action != "release" {
+	if a.Disabled && action != "release" {
 		return ErrUnavailable
 	}
 	switch action {
@@ -136,7 +157,11 @@ func (g *Guard) Act(ctx context.Context, action, id string) error {
 		if g.running[id] != nil || s.Pending == "error" {
 			return nil
 		}
-		s.Pending, s.Due, s.Retries = "manual", now, 0
+		if s.Pending == gatewayRecheck {
+			s.Due = now
+		} else {
+			s.Pending, s.Due, s.Retries, s.GatewayFailures = "manual", now, 0, 0
+		}
 	case "isolate":
 		if s.Isolated {
 			return nil
@@ -148,23 +173,9 @@ func (g *Guard) Act(ctx context.Context, action, id string) error {
 		s.Pending, s.Due = "", time.Time{}
 		s.Trigger = Trigger{Reason: "manual", At: now}
 	case "release":
-		if s.Abnormal != nil && s.Abnormal.PluginDisabled {
-			return ErrUnavailable
-		}
 		if j := g.running[id]; j != nil {
 			j.cancel()
 		}
-		g.release(s)
-	case "recover":
-		if !g.host.CanMutate() || !a.Disabled || s.Abnormal == nil || !s.Abnormal.PluginDisabled {
-			return ErrUnavailable
-		}
-		if err := g.host.Recover(ctx, a, *s.Abnormal); err != nil {
-			return err
-		}
-		a.Disabled = false
-		g.inventory[id] = a
-		s.Abnormal = nil
 		g.release(s)
 	default:
 		return ErrUnavailable

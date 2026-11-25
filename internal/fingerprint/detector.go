@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -22,8 +23,9 @@ type Transport interface {
 }
 
 type Response struct {
-	Status int
-	Body   []byte
+	Status        int
+	Body          []byte
+	CooldownUntil time.Time
 }
 
 type Detector struct {
@@ -119,45 +121,95 @@ func check(ctx context.Context, p guard.Probe, ref *reference, transport Transpo
 		BaseURL: "https://unused.invalid", APIKey: "unused", API: api,
 		Model: p.Model, Strict: true, NoStream: true,
 	}
-	outputs := make([]lmfpd.Output, 0, len(challenges))
-	for _, challenge := range challenges {
-		if ctx.Err() != nil {
-			return guard.Result{Status: guard.Cancelled}
-		}
-		req, err := lmfpd.BuildRequest(opts, challenge.Prompt)
-		if err != nil {
-			return guard.Result{Status: guard.Unsupported, Reason: "invalid_probe_config"}
-		}
-		payload, err := json.Marshal(req.Body)
-		if err != nil {
-			return guard.Result{Status: guard.Inconclusive, Reason: "challenge_failed"}
-		}
-		// Only send the SDK-built request body. The SDK's placeholder URL and
-		// headers are never used. The host owns credentials and transport.
-		sampleCtx, cancel := context.WithTimeout(ctx, p.Timeout)
-		reply, err := transport.Sample(sampleCtx, p, protocol, payload)
-		callErr := sampleCtx.Err()
-		cancel()
-		if ctx.Err() != nil {
-			return guard.Result{Status: guard.Cancelled}
-		}
-		if errors.Is(callErr, context.DeadlineExceeded) {
-			return guard.Result{Status: guard.Transient, Reason: "timeout"}
-		}
-		if err != nil || reply.Status < 200 || reply.Status > 299 {
-			return guard.Result{Status: guard.Transient, Reason: "upstream_failure", Overloaded: isOverload(reply.Status, reply.Body)}
-		}
-		text, status := decodeSample(protocol, reply.Body)
-		if status != "" {
-			return guard.Result{Status: status, Reason: "invalid_sample", Overloaded: isOverload(reply.Status, reply.Body)}
-		}
-		outputs = append(outputs, lmfpd.Output{Text: text, ExpectedCount: challenge.ExpectedCount})
+	outputs, failure := sampleRound(ctx, p, transport, protocol, opts, challenges)
+	if failure.Status != "" {
+		return failure
 	}
 	analysis, err := ref.engine.Analyze(outputs, true)
 	if err != nil {
 		return guard.Result{Status: guard.Inconclusive, Reason: "invalid_samples"}
 	}
 	return classify(analysis, p.Expected, p.Probability)
+}
+
+func sampleRound(ctx context.Context, p guard.Probe, transport Transport, protocol string, opts lmfpd.DetectConfig, challenges []lmfpd.Challenge) ([]lmfpd.Output, guard.Result) {
+	outputs := make([]lmfpd.Output, len(challenges))
+	if !p.ParallelChallenges {
+		for i, challenge := range challenges {
+			output, failure := sampleChallenge(ctx, p, transport, protocol, opts, challenge)
+			if failure.Status != "" {
+				return nil, failure
+			}
+			outputs[i] = output
+		}
+		return outputs, guard.Result{}
+	}
+	failures := make([]guard.Result, len(challenges))
+	var wg sync.WaitGroup
+	for i, challenge := range challenges {
+		wg.Go(func() {
+			outputs[i], failures[i] = sampleChallenge(ctx, p, transport, protocol, opts, challenge)
+		})
+	}
+	wg.Wait()
+	if ctx.Err() != nil {
+		return nil, guard.Result{Status: guard.Cancelled}
+	}
+
+	// Keep an actual gateway failure and any CPA deadline from this round.
+	var failure guard.Result
+	var cooldown time.Time
+	for _, current := range failures {
+		if current.Status == "" {
+			continue
+		}
+		if current.CooldownUntil.After(cooldown) {
+			cooldown = current.CooldownUntil
+		}
+		if failure.Status == "" || !failure.GatewayFailure() &&
+			(current.GatewayFailure() || current.CooldownUntil.After(failure.CooldownUntil)) {
+			failure = current
+		}
+	}
+	failure.CooldownUntil = cooldown
+	return outputs, failure
+}
+
+func sampleChallenge(ctx context.Context, p guard.Probe, transport Transport, protocol string, opts lmfpd.DetectConfig, challenge lmfpd.Challenge) (lmfpd.Output, guard.Result) {
+	var output lmfpd.Output
+	if ctx.Err() != nil {
+		return output, guard.Result{Status: guard.Cancelled}
+	}
+	req, err := lmfpd.BuildRequest(opts, challenge.Prompt)
+	if err != nil {
+		return output, guard.Result{Status: guard.Unsupported, Reason: "invalid_probe_config"}
+	}
+	payload, err := json.Marshal(req.Body)
+	if err != nil {
+		return output, guard.Result{Status: guard.Inconclusive, Reason: "challenge_failed"}
+	}
+	// Only send the SDK-built request body. The host owns credentials and transport.
+	sampleCtx, cancel := context.WithTimeout(ctx, p.Timeout)
+	reply, err := transport.Sample(sampleCtx, p, protocol, payload)
+	callErr := sampleCtx.Err()
+	cancel()
+	if ctx.Err() != nil {
+		return output, guard.Result{Status: guard.Cancelled}
+	}
+	if errors.Is(callErr, context.DeadlineExceeded) {
+		return output, guard.Result{Status: guard.Transient, Reason: "timeout"}
+	}
+	if err != nil || reply.Status < 200 || reply.Status > 299 {
+		return output, guard.Result{
+			Status: guard.Transient, Reason: "upstream_failure", HTTPStatus: reply.Status,
+			Overloaded: isOverload(reply.Status, reply.Body), CooldownUntil: reply.CooldownUntil,
+		}
+	}
+	text, status := decodeSample(protocol, reply.Body)
+	if status != "" {
+		return output, guard.Result{Status: status, Reason: "invalid_sample", Overloaded: isOverload(reply.Status, reply.Body)}
+	}
+	return lmfpd.Output{Text: text, ExpectedCount: challenge.ExpectedCount}, guard.Result{}
 }
 
 func classify(a *lmfpd.Analysis, expected string, threshold float64) guard.Result {

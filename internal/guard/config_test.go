@@ -36,7 +36,7 @@ func TestValidateConfig(t *testing.T) {
 		func(c *Config) { c.MinProbability = 1.1 },
 		func(c *Config) { c.PerProvider = c.MaxConcurrent + 1 },
 		func(c *Config) { c.ErrorTexts = []string{""} },
-		func(c *Config) { c.Expiry = "unknown" },
+		func(c *Config) { c.GatewayRecheckSeconds = 0 },
 	} {
 		cfg := DefaultConfig()
 		change(&cfg)

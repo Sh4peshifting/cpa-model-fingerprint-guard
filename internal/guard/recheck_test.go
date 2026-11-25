@@ -6,7 +6,7 @@ import (
 )
 
 func TestConfirmedMismatchRechecksAtTwoDaysAfterRestart(t *testing.T) {
-	g, h, d, now := setupGuard(t, Mismatch, false)
+	g, h, d, now := setupGuard(t, Mismatch)
 	cfg := g.View().Config
 	cfg.Default.Idle = false
 	cfg.ScanSeconds = 1
@@ -65,11 +65,10 @@ func TestConfirmedMismatchRechecksAtTwoDaysAfterRestart(t *testing.T) {
 func TestUnsuccessfulRecheckStaysIsolatedAndUsesConfiguredInterval(t *testing.T) {
 	for _, result := range []Status{Mismatch, Inconclusive, Transient, Unsupported, Cancelled} {
 		t.Run(string(result), func(t *testing.T) {
-			g, h, d, now := setupGuard(t, result, true)
+			g, _, d, now := setupGuard(t, result)
 			cfg := g.View().Config
 			cfg.MismatchRecheckSeconds, cfg.ScanSeconds = 120, 1
 			cfg.Default.Idle, cfg.Default.Trigger = false, false
-			cfg.Expiry = "release"
 			if err := g.UpdateConfig(g.View().Revision, cfg); err != nil {
 				t.Fatal(err)
 			}
@@ -91,8 +90,8 @@ func TestUnsuccessfulRecheckStaysIsolatedAndUsesConfiguredInterval(t *testing.T)
 				t.Fatalf("unsuccessful recheck altered the confirmed quarantine: %+v", a)
 			}
 			due := now.Add(2 * time.Minute)
-			if a.Pending != "" || !a.NextRecheck.Equal(due) || len(h.writes) != 0 {
-				t.Fatalf("unexpected follow-up state: %+v, host writes: %v", a, h.writes)
+			if a.Pending != "" || !a.NextRecheck.Equal(due) {
+				t.Fatalf("unexpected follow-up state: %+v", a)
 			}
 			if record.Trigger.Reason != mismatchRecheck || record.Result.Status != result || record.Action != "recheck_kept_isolated" {
 				t.Fatalf("recheck history = %+v", record)
@@ -150,7 +149,7 @@ func TestRecheckEligibility(t *testing.T) {
 }
 
 func TestRecheckMatchDoesNotClearAnUnverifiedTriggerModel(t *testing.T) {
-	g, _, d, now := setupGuard(t, Match, false)
+	g, _, d, now := setupGuard(t, Match)
 	g.state.Config.Default.Idle = false
 	s := g.state.Auths["a"]
 	s.Isolated, s.Held = true, true

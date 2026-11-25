@@ -276,7 +276,7 @@ func (g *Guard) reconcile(now time.Time, auths []Auth) {
 			j.cancel()
 		}
 		s.Version = a.Version
-		s.Consecutive = 0
+		s.Consecutive, s.GatewayFailures = 0, 0
 		s.WatchUntil = now.Add(seconds(cfg.IdleSeconds))
 		g.dirty = true
 	}

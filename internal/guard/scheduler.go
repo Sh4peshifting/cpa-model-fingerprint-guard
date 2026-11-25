@@ -2,11 +2,15 @@ package guard
 
 import (
 	"context"
+	"net/http"
 	"sort"
 	"time"
 )
 
-const mismatchRecheck = "recheck"
+const (
+	mismatchRecheck = "recheck"
+	gatewayRecheck  = "gateway_recheck"
+)
 
 func (g *Guard) schedule(now time.Time, scan bool) {
 	cfg := g.state.Config
@@ -18,13 +22,6 @@ func (g *Guard) schedule(now time.Time, scan bool) {
 	for id, a := range g.inventory {
 		s := g.state.Auths[id]
 		p := cfg.Policy(id, a.Provider)
-		if s.Isolated && !s.Trigger.At.IsZero() && now.Sub(s.Trigger.At) >= seconds(cfg.MaxIsolation) {
-			if cfg.Expiry == "release" && s.Abnormal == nil && s.Trigger.Reason != "manual" {
-				g.expire(id, s, true)
-			} else if !s.Held {
-				g.expire(id, s, false)
-			}
-		}
 		if !p.Enabled || a.Disabled || g.listErr || g.running[id] != nil {
 			continue
 		}
@@ -47,7 +44,7 @@ func (g *Guard) schedule(now time.Time, scan bool) {
 				continue
 			}
 		}
-		if s.Pending == "" || now.Before(s.Due) || now.Before(g.pauses[""]) || now.Before(g.pauses[a.Provider]) {
+		if s.Pending == "" || now.Before(s.probeDue(a)) || now.Before(g.pauses[""]) || now.Before(g.pauses[a.Provider]) {
 			continue
 		}
 		if s.Pending == "idle" && (!p.Idle || !g.idle(now, id, s, cfg)) {
@@ -55,13 +52,16 @@ func (g *Guard) schedule(now time.Time, scan bool) {
 			g.dirty = true
 			continue
 		}
-		if triggerDisabled && s.Pending != "manual" && s.Pending != mismatchRecheck {
+		if triggerDisabled && s.Pending != "manual" && s.Pending != mismatchRecheck && s.Pending != gatewayRecheck {
+			continue
+		}
+		if s.Pending == gatewayRecheck && !a.Probeable {
 			continue
 		}
 		ready = append(ready, candidate{a, s})
 	}
 
-	priority := map[string]int{"error": 0, "manual": 1, "confirm": 2, mismatchRecheck: 3, "idle": 4}
+	priority := map[string]int{"error": 0, "manual": 1, "confirm": 2, mismatchRecheck: 3, gatewayRecheck: 4, "idle": 5}
 	sort.Slice(ready, func(i, j int) bool {
 		a, b := ready[i], ready[j]
 		if ap, bp := priority[a.state.Pending], priority[b.state.Pending]; ap != bp {
@@ -88,6 +88,18 @@ func (g *Guard) schedule(now time.Time, scan bool) {
 	}
 }
 
+func (s *AuthState) probeDue(a Auth) time.Time {
+	due := s.Due
+	if s.Isolated && s.Trigger.isBusiness() && s.Pending != mismatchRecheck {
+		for _, deadline := range []time.Time{s.ProbeCooldown, a.CooldownUntil} {
+			if deadline.After(due) {
+				due = deadline
+			}
+		}
+	}
+	return due
+}
+
 func (g *Guard) idle(now time.Time, id string, s *AuthState, cfg Config) bool {
 	return g.active[id] == 0 && !now.Before(s.WatchUntil) &&
 		now.Sub(s.LastBusiness) >= seconds(cfg.IdleSeconds) &&
@@ -111,12 +123,22 @@ func mismatchRecheckDue(a Auth, s *AuthState, p Policy, cfg Config) time.Time {
 func (g *Guard) launch(a Auth, s *AuthState, cfg Config) {
 	p := cfg.Policy(a.ID, a.Provider)
 	model, expect := cfg.Target(p, s.Trigger.Model)
-	if s.Pending == mismatchRecheck {
+	switch s.Pending {
+	case mismatchRecheck:
 		model, expect = s.Abnormal.RequestModel, s.Abnormal.Expected
+	case gatewayRecheck:
+		model = s.Trigger.Model
+		expect = cfg.ExpectedModels[model]
+		if expect == "" {
+			expect = model
+			if p.Model == model && p.Expect != "" {
+				expect = p.Expect
+			}
+		}
 	}
 	ctx, cancel := context.WithCancel(g.ctx)
 	j := &job{
-		Probe:  Probe{Auth: a, Model: model, Expected: expect, Probability: cfg.MinProbability, Timeout: seconds(cfg.TimeoutSeconds)},
+		Probe:  Probe{Auth: a, Model: model, Expected: expect, Probability: cfg.MinProbability, Timeout: seconds(cfg.TimeoutSeconds), ParallelChallenges: cfg.ParallelChallenges},
 		reason: s.Pending, trigger: s.Trigger, revision: g.state.Revision, cancel: cancel,
 	}
 	g.running[a.ID] = j
@@ -163,10 +185,14 @@ func (g *Guard) finish(ctx context.Context, start time.Time, j *job, current Aut
 	if verifyErr != nil {
 		r = Result{Status: Transient, Reason: "inventory_unavailable"}
 	} else if current.ID == "" || current.Disabled || current.Version != j.Version {
-		s.Pending, s.Due, s.Consecutive = "", time.Time{}, 0
+		if !s.Isolated || !s.Trigger.isBusiness() {
+			s.Pending, s.Due = "", time.Time{}
+		}
+		s.Consecutive, s.GatewayFailures = 0, 0
 		if s.Isolated {
 			s.Held = true
 		}
+		g.nextScan = time.Time{}
 		g.save()
 		return
 	}
@@ -177,12 +203,22 @@ func (g *Guard) finish(ctx context.Context, start time.Time, j *job, current Aut
 	if j.reason == mismatchRecheck || s.LastModel != j.Model || s.LastExpected != j.Expected || s.LastResult.ReferenceBuild != r.ReferenceBuild || r.Status != Mismatch {
 		s.Consecutive = 0
 	}
+	if s.LastModel != j.Model {
+		s.GatewayFailures = 0
+	}
+	if r.Status == Transient && current.CooldownUntil.After(r.CooldownUntil) {
+		r.CooldownUntil = current.CooldownUntil
+	}
 	s.LastCheck, s.LastModel, s.LastExpected, s.LastResult = now, j.Model, j.Expected, r
 	s.Pending, s.Due = "", time.Time{}
-	action := g.applyResult(ctx, now, j, s, trigger, r)
-	g.recordOverload(now, j.Provider, r.Overloaded)
+	action := g.applyResult(now, j, s, trigger, r)
+	if action != "cooldown_wait" {
+		g.recordOverload(now, j.Provider, r.Overloaded)
+	}
 	if j.reason == mismatchRecheck {
 		trigger = Trigger{Reason: mismatchRecheck, At: start}
+	} else if j.reason == gatewayRecheck {
+		trigger.Reason, trigger.At = j.reason, start
 	}
 	g.state.History = append(g.state.History, Record{
 		At: start, AuthID: j.ID, Name: j.Name, Trigger: trigger,
@@ -192,16 +228,36 @@ func (g *Guard) finish(ctx context.Context, start time.Time, j *job, current Aut
 	g.save()
 }
 
-func (g *Guard) applyResult(ctx context.Context, now time.Time, j *job, s *AuthState, trigger Trigger, r Result) string {
+func (g *Guard) applyResult(now time.Time, j *job, s *AuthState, trigger Trigger, r Result) string {
 	cfg := g.state.Config
 	if j.reason == mismatchRecheck && r.Status != Match {
 		s.Held = true
 		return "recheck_kept_isolated"
 	}
+
+	business := s.Isolated && trigger.isBusiness()
+	s.ProbeCooldown = time.Time{}
+	if business && j.reason != mismatchRecheck && r.Status == Transient && r.CooldownUntil.After(now) {
+		s.ProbeCooldown = r.CooldownUntil
+		if !r.GatewayFailure() {
+			s.Pending, s.Due = j.reason, now
+			return "cooldown_wait"
+		}
+	}
+	if r.GatewayFailure() {
+		s.GatewayFailures++
+	} else {
+		s.GatewayFailures = 0
+	}
+
 	switch r.Status {
 	case Match:
-		if trigger.Model != "" && j.Model != trigger.Model {
+		requiresKnownModel := business && j.reason != mismatchRecheck
+		if (requiresKnownModel || trigger.Model != "") && j.Model != trigger.Model {
 			s.Held = true
+			if j.reason == gatewayRecheck {
+				g.queueGatewayRecheck(now, s)
+			}
 			return "different_model"
 		}
 		s.Abnormal = nil
@@ -210,45 +266,34 @@ func (g *Guard) applyResult(ctx context.Context, now time.Time, j *job, s *AuthS
 	case Mismatch:
 		s.Consecutive++
 		if s.Consecutive < cfg.ConfirmRounds {
-			s.Pending, s.Due = "confirm", now.Add(seconds(cfg.RetrySeconds)+g.jitter(cfg.JitterSeconds))
+			if j.reason == gatewayRecheck {
+				g.queueGatewayRecheck(now, s)
+			} else {
+				s.Pending, s.Due = "confirm", now.Add(seconds(cfg.RetrySeconds)+g.jitter(cfg.JitterSeconds))
+			}
 			return "confirm_again"
 		}
-		abnormal := Abnormal{
+		s.Abnormal = &Abnormal{
 			Trigger: trigger, Status: "confirmed_mismatch", Expected: j.Expected, RequestModel: j.Model,
 			Detected: r.Detected, Score: r.Score, Probability: r.Probability,
 			Consecutive: s.Consecutive, Confirmed: now,
 		}
-		s.Abnormal = &abnormal
 		s.Isolated, s.Held = true, true
 		if s.Trigger.At.IsZero() {
 			s.Trigger = trigger
 		}
-		if !cfg.AutoDisable {
-			return "held_by_policy"
-		}
-		if !g.host.CanMutate() {
-			return "host_mutation_unavailable"
-		}
-		if trigger.Model != "" && j.Model != trigger.Model {
-			return "different_model"
-		}
-		// Persist the isolation before requesting the authoritative mutation.
-		if g.save() != nil {
-			return "persistence_failed"
-		}
-		disabled := abnormal
-		disabled.DisabledAt, disabled.PluginDisabled = now, true
-		writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		if err := g.host.Disable(writeCtx, j.Auth, disabled); err != nil {
-			return "host_write_failed"
-		}
-		s.Abnormal = &disabled
-		auth := g.inventory[j.ID]
-		auth.Disabled = true
-		g.inventory[j.ID] = auth
-		return "disabled"
+		return "confirmed_isolation"
+	}
+
+	if j.reason == gatewayRecheck {
+		return g.queueGatewayRecheck(now, s)
+	}
+	switch r.Status {
 	case Transient, Inconclusive:
+		if business && s.Abnormal == nil && trigger.Model != "" && s.Retries >= cfg.MaxRetries &&
+			s.GatewayFailures >= min(2, cfg.MaxRetries+1) {
+			return g.queueGatewayRecheck(now, s)
+		}
 		if s.Isolated || j.reason == "manual" || j.reason == "confirm" {
 			return g.retry(now, s, j.reason, cfg)
 		}
@@ -261,10 +306,29 @@ func (g *Guard) applyResult(ctx context.Context, now time.Time, j *job, s *AuthS
 	return "recorded"
 }
 
+func isGatewayStatus(status int) bool {
+	return status == http.StatusBadGateway || status == http.StatusServiceUnavailable
+}
+
+func (r Result) GatewayFailure() bool {
+	return r.Status == Transient && isGatewayStatus(r.HTTPStatus)
+}
+
+func (g *Guard) queueGatewayRecheck(now time.Time, s *AuthState) string {
+	s.Held = true
+	s.Pending, s.Due = gatewayRecheck, now.Add(seconds(g.state.Config.GatewayRecheckSeconds))
+	return "gateway_recheck_scheduled"
+}
+
 func (g *Guard) retry(now time.Time, s *AuthState, reason string, cfg Config) string {
 	if s.Retries >= cfg.MaxRetries {
 		s.Held = s.Isolated
 		return "retries_exhausted"
+	}
+	if s.ProbeCooldown.After(now) {
+		s.Retries++
+		s.Pending, s.Due = reason, now
+		return "retry_scheduled"
 	}
 	delay := seconds(cfg.RetrySeconds)
 	for i := 0; i < s.Retries && delay < seconds(cfg.MaxRetrySeconds); i++ {
@@ -290,21 +354,9 @@ func (g *Guard) recordOverload(now time.Time, provider string, overload bool) {
 	}
 }
 
-func (g *Guard) expire(id string, s *AuthState, release bool) {
-	if j := g.running[id]; j != nil {
-		j.cancel()
-	}
-	if release {
-		g.release(s)
-	} else {
-		s.Held, s.Pending, s.Due = true, "", time.Time{}
-	}
-	g.dirty = true
-}
-
 func (g *Guard) release(s *AuthState) {
 	s.Isolated, s.Held, s.Retries, s.Consecutive = false, false, 0, 0
-	s.Trigger, s.Pending, s.Due = Trigger{}, "", time.Time{}
+	s.Trigger, s.Pending, s.Due, s.GatewayFailures, s.ProbeCooldown = Trigger{}, "", time.Time{}, 0, time.Time{}
 }
 
 func (g *Guard) trimHistory() {

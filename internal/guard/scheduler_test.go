@@ -9,18 +9,10 @@ import (
 )
 
 type testHost struct {
-	auths  []Auth
-	writes []string
-	mutate bool
+	auths []Auth
 }
 
 func (h *testHost) List(context.Context) ([]Auth, error) { return slices.Clone(h.auths), nil }
-func (h *testHost) CanMutate() bool                      { return h.mutate }
-func (h *testHost) Disable(_ context.Context, a Auth, _ Abnormal) error {
-	h.writes = append(h.writes, a.ID)
-	return nil
-}
-func (h *testHost) Recover(context.Context, Auth, Abnormal) error { return nil }
 
 type testDetector struct {
 	result Result
@@ -39,7 +31,7 @@ func (d *testDetector) Check(ctx context.Context, p Probe) Result {
 	}
 }
 
-func setupGuard(t *testing.T, result Status, mutate bool) (*Guard, *testHost, *testDetector, *time.Time) {
+func setupGuard(t *testing.T, result Status) (*Guard, *testHost, *testDetector, *time.Time) {
 	t.Helper()
 	c := DefaultConfig()
 	c.Enabled, c.IdleSeconds, c.ConfirmRounds, c.JitterSeconds = true, 10, 1, 0
@@ -47,7 +39,7 @@ func setupGuard(t *testing.T, result Status, mutate bool) (*Guard, *testHost, *t
 	h := &testHost{auths: []Auth{
 		{ID: "a", Name: "a.json", Provider: "p", Probeable: true, Version: "v1"},
 		{ID: "b", Name: "b.json", Provider: "p", Probeable: true, Version: "v1"},
-	}, mutate: mutate}
+	}}
 	d := &testDetector{result: Result{Status: result}, start: make(chan Probe, 4), done: make(chan struct{})}
 	g, err := Open(filepath.Join(t.TempDir(), "state.json"), c, h, d)
 	if err != nil {
@@ -72,7 +64,7 @@ func nextProbe(t *testing.T, d *testDetector) Probe {
 }
 
 func TestQuarantineRetryAndRestart(t *testing.T) {
-	g, _, d, now := setupGuard(t, Transient, false)
+	g, _, d, now := setupGuard(t, Transient)
 	g.Observe("unknown", "a", "fixture", 503, "", "")
 	if g.Isolated("a") {
 		t.Fatal("unattributed event was accepted")
@@ -104,8 +96,8 @@ func TestQuarantineRetryAndRestart(t *testing.T) {
 	restored.Close()
 }
 
-func TestBusinessStreamPreventsIdleAndMismatchDisables(t *testing.T) {
-	g, h, d, now := setupGuard(t, Mismatch, true)
+func TestBusinessStreamPreventsIdleAndMismatchIsolates(t *testing.T) {
+	g, _, d, now := setupGuard(t, Mismatch)
 	g.Begin("stream", "a")
 	g.Begin("stream", "a")
 	*now = now.Add(time.Minute)
@@ -120,14 +112,14 @@ func TestBusinessStreamPreventsIdleAndMismatchDisables(t *testing.T) {
 	if v.Auths[0].Active != 0 || !v.Auths[0].LastBusiness.Equal(*now) {
 		t.Fatalf("stream was not completed: %+v", v.Auths[0])
 	}
-	if len(h.writes) != 1 || h.writes[0] != "b" || v.Auths[1].Abnormal == nil || !v.Auths[1].Abnormal.PluginDisabled {
-		t.Fatalf("missing durable disable: %+v %+v", h.writes, v.Auths[1])
+	if !v.Auths[1].Isolated || v.Auths[1].Disabled || v.Auths[1].Abnormal == nil {
+		t.Fatalf("expected quarantine only: %+v", v.Auths[1])
 	}
 }
 
 func TestChangedCredentialDiscardsStaleMismatch(t *testing.T) {
-	g, h, d, _ := setupGuard(t, Mismatch, true)
-	if err := g.Act(t.Context(), "check", "a"); err != nil {
+	g, h, d, _ := setupGuard(t, Mismatch)
+	if err := g.Act("check", "a"); err != nil {
 		t.Fatal(err)
 	}
 	g.step()
@@ -135,7 +127,7 @@ func TestChangedCredentialDiscardsStaleMismatch(t *testing.T) {
 	h.auths[0].Version = "v2"
 	close(d.done)
 	g.wg.Wait()
-	if len(h.writes) != 0 || len(g.View().History) != 0 {
+	if g.Isolated("a") || len(g.View().History) != 0 {
 		t.Fatal("obsolete probe effected a decision")
 	}
 }
@@ -160,7 +152,7 @@ func TestTriggers(t *testing.T) {
 }
 
 func TestMatchedProbeReleasesOnlyPluginQuarantine(t *testing.T) {
-	g, h, d, _ := setupGuard(t, Match, false)
+	g, h, d, _ := setupGuard(t, Match)
 	h.auths[0].Cooling = true
 	g.reconcile(g.now(), h.auths)
 	g.Begin("business-a", "a", "selection-a")
@@ -176,7 +168,7 @@ func TestMatchedProbeReleasesOnlyPluginQuarantine(t *testing.T) {
 }
 
 func TestEscalationRequiresDistinctBusinessRequests(t *testing.T) {
-	g, _, _, _ := setupGuard(t, Transient, false)
+	g, _, _, _ := setupGuard(t, Transient)
 	g.state.Config.TriggerCount, g.state.Config.DedupeSeconds = 2, 0
 	g.Begin("one", "a")
 	g.Observe("one", "a", "fixture", 503, "", "")
@@ -191,32 +183,13 @@ func TestEscalationRequiresDistinctBusinessRequests(t *testing.T) {
 	}
 }
 
-func TestExplicitReleaseExpiryAfterRetryExhaustion(t *testing.T) {
-	g, _, d, now := setupGuard(t, Transient, false)
-	g.state.Config.Expiry, g.state.Config.MaxRetries, g.state.Config.MaxIsolation = "release", 0, 30
-	g.Begin("business", "a")
-	g.Observe("business", "a", "fixture", 502, "", "")
-	g.step()
-	nextProbe(t, d)
-	close(d.done)
-	g.wg.Wait()
-	if !g.View().Auths[0].Held {
-		t.Fatal("expected hold while quarantine has not expired")
-	}
-	*now = now.Add(31 * time.Second)
-	g.step()
-	if g.Isolated("a") {
-		t.Fatal("explicit release policy did not take effect")
-	}
-}
-
 func TestMismatchConfirmationRestartsWhenReferenceChanges(t *testing.T) {
-	g, _, d, now := setupGuard(t, Mismatch, true)
+	g, _, d, now := setupGuard(t, Mismatch)
 	g.state.Config.ConfirmRounds = 2
 	g.state.Config.Default.Idle = false
 	d.result.ReferenceBuild = "old"
 	close(d.done)
-	if err := g.Act(t.Context(), "check", "a"); err != nil {
+	if err := g.Act("check", "a"); err != nil {
 		t.Fatal(err)
 	}
 	g.step()

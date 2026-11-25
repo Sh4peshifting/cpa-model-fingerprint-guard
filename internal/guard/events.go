@@ -76,7 +76,7 @@ func (g *Guard) Observe(request, id, model string, status int, code, text string
 		j.cancel()
 	}
 	s.Isolated, s.Held, s.Trigger = true, false, window.first
-	s.Pending, s.Due, s.Retries, s.Consecutive = "error", now, 0, 0
+	s.Pending, s.Due, s.Retries, s.Consecutive, s.GatewayFailures = "error", now, 0, 0, 0
 	g.save()
 	g.signal()
 }

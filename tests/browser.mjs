@@ -90,6 +90,7 @@ try {
   await send('Emulation.clearDeviceMetricsOverride');
   await evaluate(manualLogin);
   await until(() => evaluate('!document.getElementById("workspace").hidden'));
+  assert(await evaluate('!document.querySelector("#refresh, #logout")'));
   assert.equal(await evaluate('document.getElementById("key").value'), '');
   assert.equal(await evaluate('document.getElementById("runtime-native").textContent'), '开启');
   assert.equal(await evaluate('document.getElementById("runtime-auto-update").textContent'), '关闭');
@@ -111,18 +112,33 @@ try {
   assert.equal(await evaluate('getComputedStyle(document.getElementById("auth")).animationName'), 'none');
   assert.equal(await evaluate('getComputedStyle(document.querySelector("nav"), "::before").transitionDuration'), '0s');
   await emulateTheme('light');
+  await send('Emulation.setFocusEmulationEnabled', { enabled: true });
   await evaluate('document.querySelector("[data-tab=settings]").click()');
   assert(await evaluate('document.getElementById("save-settings").disabled'));
+  const point = await evaluate(`(() => {
+    const tip = document.querySelector('[name="gateway_recheck_seconds"]').closest('.field').querySelector('.field-tip');
+    tip.scrollIntoView({ block: 'center' });
+    const { x, y, width, height } = tip.getBoundingClientRect();
+    return { x: x + width / 2, y: y + height / 2 };
+  })()`);
+  await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point });
+  await until(() => evaluate(`getComputedStyle(document.querySelector('[name="gateway_recheck_seconds"]').closest('.field').querySelector('.field-tooltip')).visibility === 'visible'`));
   const configured = await evaluate(`(() => {
     const input = document.querySelector('input[name="history_limit"]');
     const interval = document.querySelector('input[name="mismatch_recheck_seconds"]');
-    if (interval?.value !== '172800' || interval.closest('fieldset').querySelector('legend').textContent !== '扫描与复检') return false;
+    const recovery = document.querySelector('input[name="gateway_recheck_seconds"]');
+    const parallel = document.querySelector('select[name="parallel_challenges"]');
+    if (interval?.value !== '172800' || interval.closest('fieldset').querySelector('legend').textContent !== '扫描与复检') return 'confirmed mismatch interval: ' + interval?.value;
+    if (recovery?.value !== '3600' || parallel?.value !== 'true') return 'recovery interval and parallel challenges: ' + recovery?.value + ', ' + parallel?.value;
+    if (document.querySelector('[name="auto_disable"], [name="max_isolation_seconds"], [name="expiry"]')) return 'retired setting is visible';
+    recovery.value = 7200;
+    parallel.value = 'false';
     input.value = 42;
     interval.value = 43200;
     interval.dispatchEvent(new Event('input', { bubbles: true }));
     return !document.getElementById('save-settings').disabled;
   })()`);
-  assert(configured);
+  assert.equal(configured, true);
   const modelMappings = await evaluate(`document.querySelector('textarea[name="expected_models"]').value`);
   await evaluate(`(() => {
     document.querySelector('textarea[name="expected_models"]').value = '{';
@@ -135,20 +151,29 @@ try {
     mappings.dispatchEvent(new Event('input', { bubbles: true }));
   })()`);
   assert(await evaluate('document.getElementById("settings-error").hidden'));
-  await evaluate('document.getElementById("refresh").click()');
-  await until(() => evaluate('document.getElementById("notice").textContent === "状态已刷新"'));
+  await until(() => evaluate('performance.getEntriesByType("resource").filter(entry => entry.name.endsWith("/model-fingerprint-guard/state")).length > 1'));
   assert.equal(await evaluate('document.getElementById("settings-state").textContent'), '有未保存的更改');
   await evaluate('document.getElementById("reload-settings").click()');
   assert(await evaluate('document.getElementById("confirm-dialog").open && document.getElementById("confirm-title").textContent === "重新载入"'));
   await evaluate('document.getElementById("confirm-cancel").click()');
   assert.equal(await evaluate(`document.querySelector('input[name="mismatch_recheck_seconds"]').value`), '43200');
   await evaluate('document.getElementById("save-settings").click()');
-  await until(() => evaluate('document.getElementById("notice").textContent.includes("全局设置已应用")'));
+  await until(() => evaluate('document.getElementById("notice-text").textContent === "全局设置已应用"'));
+  assert.equal(await evaluate('getComputedStyle(document.getElementById("notice")).position'), 'fixed');
+  await evaluate('document.getElementById("dismiss-notice").click()');
+  assert(await evaluate('document.getElementById("notice").hidden'));
   assert.equal(await evaluate(`document.querySelector('input[name="mismatch_recheck_seconds"]').value`), '43200');
+  assert.equal(await evaluate(`document.querySelector('input[name="gateway_recheck_seconds"]').value`), '7200');
+  assert.equal(await evaluate(`document.querySelector('select[name="parallel_challenges"]').value`), 'false');
   assert(await evaluate('document.getElementById("save-settings").disabled'));
   await evaluate('document.querySelector("[data-tab=auth]").click()');
   assert.equal(await evaluate('document.querySelectorAll("#auth-cards article").length'), 2);
   assert(await evaluate('document.querySelector("#auth-cards article").textContent.includes("预期 / 识别模型")'));
+  assert.equal(await evaluate('document.querySelector("#auth-cards article .badge.pending")?.textContent'), '待检测');
+  const failedSquares = await evaluate('document.querySelectorAll("#auth-cards .detection-squares .failed").length');
+  assert(failedSquares > 0);
+  assert.match(await evaluate('document.querySelector("#auth-cards .detection-summary")?.textContent'),
+    new RegExp('一致 0 / 不一致 0 / 失败 ' + failedSquares + ' · 一致率 0%'));
   await evaluate(`(() => {
     const search = document.getElementById('auth-search');
     search.value = 'no-matching-credential';
@@ -165,7 +190,7 @@ try {
   await evaluate('document.getElementById("batch-on").click()');
   assert(await evaluate('document.getElementById("confirm-dialog").open && document.getElementById("confirm-title").textContent === "启用检测"'));
   await evaluate('document.getElementById("confirm-submit").click()');
-  await until(() => evaluate('document.getElementById("notice").textContent === "批量设置已保存"'));
+  await until(() => evaluate('document.getElementById("notice-text").textContent === "批量设置已保存"'));
   await evaluate('document.querySelector(\'[data-layout="table"]\').click()');
   assert.equal(await evaluate('document.querySelectorAll("#auth-rows tr").length'), 2);
   assert(await evaluate('document.querySelector("#auth thead").textContent.includes("认证 / 提供商")'));
@@ -184,7 +209,7 @@ try {
     row.value = 'false';
     document.getElementById('auth-form').requestSubmit();
   })()`);
-  await until(() => evaluate('document.getElementById("notice").textContent.includes("认证设置已保存")'));
+  await until(() => evaluate('document.getElementById("notice-text").textContent === "认证设置已保存"'));
   await evaluate('document.querySelector("[data-tab=history]").click()');
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("#history thead th")).slice(3, 5).map(cell => cell.textContent)'),
     ['测试 / 预期模型', '识别模型']);
@@ -193,8 +218,7 @@ try {
     const cells = document.querySelector('#history-rows tr').cells;
     return cells[3].textContent.includes(' / ') && cells[6].textContent.includes(' / ');
   })()`));
-  await evaluate('document.getElementById("logout").click()');
-  assert(await evaluate('!document.getElementById("login-page").hidden && document.getElementById("workspace").hidden && localStorage.length === 0 && sessionStorage.length === 0'));
+  assert(await evaluate('localStorage.length === 0 && sessionStorage.length === 0'));
   // Use a same-origin host page for the parent. The plugin's policy blocks nested frames.
   await send('Page.navigate', { url: new URL('/healthz', pluginURL).href });
   await until(() => evaluate('location.pathname === "/healthz" && document.readyState === "complete"'));
@@ -253,8 +277,8 @@ try {
   await openPluginWithRecord(validRecord);
   await until(() => pluginFrame(workspaceOpen));
   assert(await pluginFrame("doc.getElementById('key').value === ''"));
-  await pluginFrame("doc.getElementById('logout').click()");
-  assert(await pluginFrame(manualForm));
+  await openPluginWithRecord(validRecord);
+  await until(() => pluginFrame(workspaceOpen));
   assert(await evaluate(`localStorage.length === 2 && localStorage.getItem('isLoggedIn') === 'true'
     && localStorage.getItem('cli-proxy-auth') === ${JSON.stringify(validRecord)} && sessionStorage.length === 0`));
   await openPluginWithRecord(panelRecord(host, { ...remembered, managementKey: 'fixture-expired' }));
@@ -304,7 +328,7 @@ try {
     console.log('Chromium: manual and automatic login through a cookie-protected management endpoint passed');
   }
   socket.close();
-  console.log('Chromium: centered login, remembered panel session, manual fallback, themes, keyboard tabs, credential layouts, settings, history and logout passed');
+  console.log('Chromium: login, session reload, themes, credential queue and history, settings tooltips and toast passed');
 } finally {
   chrome.kill();
   await exit;

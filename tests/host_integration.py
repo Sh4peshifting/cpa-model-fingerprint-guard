@@ -29,6 +29,7 @@ class Upstream(BaseHTTPRequestHandler):
     calls = []
     failures = set()
     sse_faults = set()
+    challenge_barrier = None
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -36,6 +37,9 @@ class Upstream(BaseHTTPRequestHandler):
         probe = any(len(str(item.get("content", ""))) > 80 for item in body.get("messages", []))
         model = body.get("model")
         self.calls.append((auth, model, probe))
+        barrier = self.challenge_barrier
+        if probe and barrier is not None:
+            barrier.wait()
         if body.get("stream") and auth in self.sse_faults:
             events = [
                 'data: {"id":"chatcmpl-fixture","object":"chat.completion.chunk","created":1,"model":"k3","choices":[{"index":0,"delta":{"content":"sample"},"finish_reason":null}]}\n\n',
@@ -273,6 +277,7 @@ plugins:
           model: {MODEL}
           expected: {MODEL}
         scan_seconds: 1
+        parallel_challenges: true
         retry_seconds: 30
         jitter_seconds: 0
 """)
@@ -309,6 +314,8 @@ plugins:
         before_probe = wait_for(lambda: next((item for item in get_state(base)["auths"]
                                              if item["id"] == a and item.get("last_business") and not item.get("active")), None))
         Upstream.calls.clear()
+        barrier = threading.Barrier(3, timeout=5)
+        Upstream.challenge_barrier = barrier
         code, body = request(base, API + "/action", "POST", {"action": "check", "ids": [a]})
         assert code == 200 and json.loads(body)["results"][a] == "", (code, body)
         try:
@@ -317,6 +324,9 @@ plugins:
             current = get_state(base)
             print("probe diagnostics", current and current["auths"], Upstream.calls)
             raise
+        finally:
+            Upstream.challenge_barrier = None
+        assert not barrier.broken, "CPA did not issue all three challenges in parallel"
         assert after_probe["history"][0]["result"]["status"] == "inconclusive", after_probe["history"][0]
         assert next(x for x in after_probe["auths"] if x["id"] == a)["last_business"] == before_probe["last_business"]
         assert len(Upstream.calls) == 3 and all(auth == "Bearer fixture-upstream-a" and model == "k3" and probe
@@ -331,9 +341,14 @@ plugins:
         call_count = len(Upstream.calls)
         assert call_business(base)[0] == 200
         assert any(auth == "Bearer fixture-upstream-b" and not probe for auth, _, probe in Upstream.calls[call_count:])
-        overloaded = wait_for(lambda: next((row for row in get_state(base)["history"]
-                                            if row["trigger"].get("http_status") == 503), None))
-        assert overloaded["result"]["status"] == "transient"
+        def pending_during_cooldown():
+            auth = next(x for x in get_state(base)["auths"] if x["id"] == a)
+            next_probe = auth.get("next_probe")
+            if next_probe and datetime.fromisoformat(next_probe) > datetime.now(timezone.utc):
+                return auth
+            return None
+        cooling = wait_for(pending_during_cooldown)
+        assert cooling["pending"] == "error" and not cooling["running"] and cooling["retries"] == 0, cooling
         assert not any(auth == "Bearer fixture-upstream-a" and probe for auth, _, probe in Upstream.calls[call_count:])
         if browser_test:
             script = Path(__file__).with_name("browser.mjs")

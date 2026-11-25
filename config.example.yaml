@@ -34,6 +34,7 @@ plugins:
         idle_seconds: 1800
         interval_seconds: 21600
         mismatch_recheck_seconds: 172800
+        gateway_recheck_seconds: 3600
         timeout_seconds: 90
         jitter_seconds: 10
         dedupe_seconds: 10
@@ -43,14 +44,12 @@ plugins:
         error_texts: ["Our servers are currently overloaded. Please try again later."]
         min_probability: 0.9
         confirm_rounds: 2
-        auto_disable: true
+        parallel_challenges: false
         max_concurrent: 2
         per_provider: 1
         retry_seconds: 60
         max_retry_seconds: 900
         max_retries: 5
-        max_isolation_seconds: 7200
-        expiry: hold
         overload_limit: 3
         overload_pause_seconds: 120
         history_limit: 500
