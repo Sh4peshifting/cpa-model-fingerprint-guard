@@ -3,6 +3,7 @@ package fingerprint
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"os"
 	"testing"
 	"time"
@@ -12,20 +13,38 @@ import (
 )
 
 func TestClassificationRequiresValidCalibratedRound(t *testing.T) {
-	p := .95
-	a := &lmfpd.Analysis{Decision: "scored", UsedOutputs: 3, Prediction: "reference", Probability: &p, ProbabilityStatus: "reference_calibrated"}
-	if got := classify(a, "expected", .9); got.Status != guard.Mismatch {
+	p := .9
+	a := lmfpd.Analysis{
+		Decision: "scored", UsedOutputs: 3, Prediction: "reference",
+		Probability: &p, ProbabilityStatus: "reference_calibrated",
+		Evidence: lmfpd.Evidence{Insufficient: true},
+	}
+	if got := classify(&a, "expected", .9); got.Status != guard.Mismatch || got.Reason != "" {
 		t.Fatalf("classification = %+v", got)
 	}
-	if got := classify(a, "reference", .9); got.Status != guard.Match {
+	if got := classify(&a, "reference", .9); got.Status != guard.Match || got.Reason != "" {
 		t.Fatalf("classification = %+v", got)
 	}
-	if got := classify(a, "expected", .99); got.Status != guard.Inconclusive {
-		t.Fatalf("classification = %+v", got)
-	}
-	a.UsedOutputs = 2
-	if got := classify(a, "expected", .9); got.Status != guard.Inconclusive {
-		t.Fatalf("classification = %+v", got)
+	for _, tc := range []struct {
+		name   string
+		change func(*lmfpd.Analysis)
+	}{
+		{"incomplete round", func(a *lmfpd.Analysis) { a.UsedOutputs = 2 }},
+		{"unscorable reply", func(a *lmfpd.Analysis) { a.Decision = "not_model" }},
+		{"missing prediction", func(a *lmfpd.Analysis) { a.Prediction = "" }},
+		{"uncalibrated score", func(a *lmfpd.Analysis) { a.ProbabilityStatus = "unavailable" }},
+		{"missing probability", func(a *lmfpd.Analysis) { a.Probability = nil }},
+		{"below threshold", func(a *lmfpd.Analysis) { v := math.Nextafter(.9, 0); a.Probability = &v }},
+		{"out of range", func(a *lmfpd.Analysis) { v := 1.01; a.Probability = &v }},
+		{"invalid probability", func(a *lmfpd.Analysis) { v := math.NaN(); a.Probability = &v }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			analysis := a
+			tc.change(&analysis)
+			if got := classify(&analysis, "expected", .9); got.Status != guard.Inconclusive || got.Reason != "insufficient_evidence" {
+				t.Fatalf("classification = %+v", got)
+			}
+		})
 	}
 }
 
