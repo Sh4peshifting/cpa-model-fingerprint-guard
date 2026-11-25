@@ -76,7 +76,8 @@ async function api(path, method = 'GET', body, timeout = 15000) {
   const headers = { Authorization: 'Bearer ' + key };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   const response = await fetch(apiBase + path, {
-    method, headers, credentials: 'omit', cache: 'no-store', redirect: 'error',
+    // Same-origin access proxies need the browser's existing session cookie.
+    method, headers, credentials: 'same-origin', cache: 'no-store', redirect: 'error',
     signal: AbortSignal.timeout(timeout),
     body: body === undefined ? undefined : JSON.stringify(body),
   });
