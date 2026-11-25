@@ -420,7 +420,7 @@ function credential(a) {
   const { checkbox, identity, status, models, result, actions } = credentialParts(a);
   const information = [
     ['最后业务', localTime(a.last_business)], ['最后检测', localTime(a.last_check)],
-    ['预期 / 检测模型', models], ['结果 / 隔离', result],
+    ['预期 / 识别模型', models], ['结果 / 隔离', result],
   ];
   if (authLayout === 'table') {
     const row = element('tr', null, { 'data-auth': a.id });

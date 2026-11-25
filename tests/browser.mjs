@@ -148,6 +148,7 @@ try {
   assert(await evaluate('document.getElementById("save-settings").disabled'));
   await evaluate('document.querySelector("[data-tab=auth]").click()');
   assert.equal(await evaluate('document.querySelectorAll("#auth-cards article").length'), 2);
+  assert(await evaluate('document.querySelector("#auth-cards article").textContent.includes("预期 / 识别模型")'));
   await evaluate(`(() => {
     const search = document.getElementById('auth-search');
     search.value = 'no-matching-credential';
@@ -168,6 +169,7 @@ try {
   await evaluate('document.querySelector(\'[data-layout="table"]\').click()');
   assert.equal(await evaluate('document.querySelectorAll("#auth-rows tr").length'), 2);
   assert(await evaluate('document.querySelector("#auth thead").textContent.includes("认证 / 提供商")'));
+  assert(await evaluate('document.querySelector("#auth thead").textContent.includes("预期 / 识别模型")'));
   assert(await evaluate('document.querySelector("#auth-rows input[type=checkbox]").checked'));
   await evaluate('document.getElementById("clear-selection").click()');
   assert(await evaluate('document.getElementById("batch-actions").hidden'));
@@ -184,6 +186,8 @@ try {
   })()`);
   await until(() => evaluate('document.getElementById("notice").textContent.includes("认证设置已保存")'));
   await evaluate('document.querySelector("[data-tab=history]").click()');
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("#history thead th")).slice(3, 5).map(cell => cell.textContent)'),
+    ['测试 / 预期模型', '识别模型']);
   assert(await evaluate('document.getElementById("history-rows").textContent.includes("证据不足")'));
   assert(await evaluate(`(() => {
     const cells = document.querySelector('#history-rows tr').cells;

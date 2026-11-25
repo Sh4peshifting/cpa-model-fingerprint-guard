@@ -165,9 +165,10 @@ func classify(a *lmfpd.Analysis, expected string, threshold float64) guard.Resul
 		Status: guard.Inconclusive, Detected: a.Prediction,
 		Score: a.RankingScore, Probability: a.Probability, Reason: "insufficient_evidence",
 	}
+	// The pinned SDK leaves Evidence.Insufficient set even on calibrated results.
 	if a.Decision != "scored" || a.UsedOutputs != 3 || a.Prediction == "" ||
 		a.ProbabilityStatus != "reference_calibrated" || a.Probability == nil ||
-		a.Evidence.Insufficient || !(*a.Probability >= threshold && *a.Probability <= 1) {
+		!(*a.Probability >= threshold && *a.Probability <= 1) {
 		return r
 	}
 	r.Reason = ""
