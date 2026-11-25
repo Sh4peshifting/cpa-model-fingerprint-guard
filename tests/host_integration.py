@@ -258,6 +258,7 @@ plugins:
         plugins_status, plugins = request(base, "/v0/management/plugins")
         assert plugins_status == 200 and RESOURCE.encode() in plugins
         plugin_info = next(info for info in json.loads(plugins)["plugins"] if info["id"] == "model-fingerprint-guard")
+        assert plugin_info["metadata"]["author"] == "Sh4peshifting"
         assert plugin_info["metadata"]["github_repository"] == "https://github.com/Sh4peshifting/cpa-model-fingerprint-guard"
         serialized = json.dumps(initial)
         assert all(secret not in serialized for secret in ["fixture-upstream", "fixture-refresh", "fixture private note", MANAGEMENT_KEY])

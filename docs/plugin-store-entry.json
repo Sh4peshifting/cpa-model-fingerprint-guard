@@ -2,7 +2,7 @@
   "id": "model-fingerprint-guard",
   "name": "Model Fingerprint Guard",
   "description": "Runs locally scored lm-detector challenges against selected OAuth credentials, tracks model mismatches and temporarily quarantines unhealthy credentials.",
-  "author": "bul1horn",
+  "author": "Sh4peshifting",
   "repository": "https://github.com/Sh4peshifting/cpa-model-fingerprint-guard",
   "homepage": "https://github.com/Sh4peshifting/cpa-model-fingerprint-guard",
   "license": "MIT",

@@ -124,7 +124,7 @@ func registration() any {
 	return map[string]any{
 		"schema_version": pluginabi.SchemaVersion,
 		"metadata": pluginapi.Metadata{
-			Name: "模型指纹守卫", Version: releaseVersion, Author: "bul1horn",
+			Name: "模型指纹守卫", Version: releaseVersion, Author: "Sh4peshifting",
 			GitHubRepository: "https://github.com/Sh4peshifting/cpa-model-fingerprint-guard",
 		},
 		"capabilities": map[string]bool{
