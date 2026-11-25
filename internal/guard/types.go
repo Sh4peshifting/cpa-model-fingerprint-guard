@@ -32,6 +32,7 @@ type Result struct {
 	ReferenceBuild string    `json:"reference_build,omitempty"`
 	Status         Status    `json:"status"`
 	Detected       string    `json:"detected,omitempty"`
+	DetectedClass  string    `json:"detected_class,omitempty"`
 	Score          *float64  `json:"score,omitempty"`
 	Probability    *float64  `json:"probability,omitempty"`
 	Reason         string    `json:"reason,omitempty"`

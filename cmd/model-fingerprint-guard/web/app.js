@@ -49,6 +49,7 @@ const translations = {
 const translate = value => translations[value] || value || '—';
 const localTime = value => value ? new Date(value).toLocaleString() : '—';
 const numberText = value => value == null ? '—' : value.toFixed(3);
+const identifiedModel = result => result?.detected_class || result?.detected || '—';
 let key = '';
 let view = null;
 let settingsRevision = 0;
@@ -341,7 +342,7 @@ function filteredAuths() {
   const query = byId('auth-search').value.trim().toLowerCase();
   const filter = byId('auth-filter').value;
   return view.auths.filter(a => (!filter || (filter === 'pending' ? a.pending && !a.running : stateName(a) === filter)) &&
-    [a.name, a.id, a.provider, a.policy.model, a.policy.expected, a.last_result?.detected].join(' ').toLowerCase().includes(query));
+    [a.name, a.id, a.provider, a.policy.model, a.policy.expected, identifiedModel(a.last_result)].join(' ').toLowerCase().includes(query));
 }
 function setSelection(auths, value) {
   for (const a of auths) {
@@ -374,7 +375,7 @@ function credentialParts(a) {
   }
   const expected = a.last_expected || a.policy.expected || view.config.expected_models?.[a.policy.model] || a.policy.model;
   const models = element('div');
-  models.append(element('span', expected || '—'), element('small', a.last_result?.detected || '—'));
+  models.append(element('span', expected || '—'), element('small', identifiedModel(a.last_result)));
   const actions = element('div', null, { class: 'row-actions' });
   actions.append(
     actionButton('设置', 'settings', 'settings', () => editAuth(a)),
@@ -559,12 +560,12 @@ function renderHistory() {
   const query = byId('history-search').value.trim().toLowerCase();
   const filter = byId('history-filter').value;
   const history = view.history.filter(row => (!filter || row.result.status === filter) &&
-    [row.name, row.auth_id, row.model, row.expected, row.result.detected, translate(row.action)]
+    [row.name, row.auth_id, row.model, row.expected, identifiedModel(row.result), translate(row.action)]
       .join(' ').toLowerCase().includes(query));
   const rows = history.map(row => {
     const tr = element('tr');
     for (const value of [localTime(row.at), row.name, translate(row.trigger.reason), row.model + ' / ' + row.expected,
-      row.result.detected || '—', resultBadge(row.result.status), numberText(row.result.probability),
+      identifiedModel(row.result), resultBadge(row.result.status), numberText(row.result.probability),
       (row.duration_ms / 1000).toFixed(2) + ' 秒', translate(row.action)]) {
       const cell = element('td');
       cell.append(value);

@@ -48,6 +48,35 @@ func TestClassificationRequiresValidCalibratedRound(t *testing.T) {
 	}
 }
 
+func TestSolUsesSharedClassOnlyWhenPresent(t *testing.T) {
+	probability := .92
+	analysis := lmfpd.Analysis{
+		Decision: "scored", UsedOutputs: 3, Prediction: astraModel,
+		Probability: &probability, ProbabilityStatus: "reference_calibrated",
+	}
+	combined := reference{sharedAstraSol: true}
+	expected := combined.expectedModel(guard.ModelGPT61Sol)
+	if expected != astraModel {
+		t.Fatalf("combined reference = %q", expected)
+	}
+	if got := combined.classify(&analysis, expected, .9); got.Status != guard.Match ||
+		got.Detected != astraModel || got.DetectedClass != "gpt-6-astra / gpt-6.1-sol" {
+		t.Fatalf("shared classification = %+v", got)
+	}
+	if got := combined.classify(&analysis, expected, .95); got.Status != guard.Inconclusive {
+		t.Fatalf("shared class bypassed the probability threshold: %+v", got)
+	}
+	analysis.Prediction = "other"
+	if got := combined.classify(&analysis, expected, .9); got.Status != guard.Mismatch || got.DetectedClass != "" {
+		t.Fatalf("unrelated classification = %+v", got)
+	}
+	separate := reference{}
+	analysis.Prediction = astraModel
+	if got := separate.classify(&analysis, separate.expectedModel(guard.ModelGPT61Sol), .9); got.Status != guard.Mismatch || got.DetectedClass != "" {
+		t.Fatalf("separate reference applied the combined class: %+v", got)
+	}
+}
+
 func TestJSONSampleValidation(t *testing.T) {
 	for _, tc := range []struct {
 		protocol, body, text string
@@ -83,7 +112,7 @@ func TestPinnedProbeWithRealReference(t *testing.T) {
 		if err := json.Unmarshal(body, &request); err != nil {
 			t.Fatal(err)
 		}
-		if p.ID != "a" || p.Model != "alias" || protocol != "openai-response" || request["model"] != "alias" || seen[string(body)] {
+		if p.ID != "a" || p.Model != probe.Model || protocol != "openai-response" || request["model"] != probe.Model || seen[string(body)] {
 			t.Fatalf("unlocked or duplicate probe: %+v", p)
 		}
 		seen[string(body)] = true
@@ -92,8 +121,11 @@ func TestPinnedProbeWithRealReference(t *testing.T) {
 	if err != nil || len(d.Models()) == 0 {
 		t.Fatalf("load reference: %v", err)
 	}
-	probe.Expected = d.Models()[0]
-	if got := d.Check(t.Context(), probe); len(seen) != 3 || got.Status != guard.Inconclusive {
-		t.Fatalf("samples = %d, result = %+v", len(seen), got)
+	for _, target := range [][2]string{{"alias", d.Models()[0]}, {guard.ModelGPT61Sol, guard.ModelGPT61Sol}} {
+		probe.Model, probe.Expected = target[0], target[1]
+		clear(seen)
+		if got := d.Check(t.Context(), probe); len(seen) != 3 || got.Status != guard.Inconclusive {
+			t.Fatalf("%s: samples = %d, result = %+v", probe.Model, len(seen), got)
+		}
 	}
 }

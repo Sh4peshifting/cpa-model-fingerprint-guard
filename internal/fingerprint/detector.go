@@ -33,11 +33,14 @@ type Detector struct {
 	transport Transport
 }
 
+const astraModel = "gpt-6-astra"
+
 type reference struct {
-	engine  *lmfpd.Detector
-	models  []string
-	builtAt time.Time
-	source  string
+	engine         *lmfpd.Detector
+	models         []string
+	builtAt        time.Time
+	source         string
+	sharedAstraSol bool
 }
 
 func Open(ctx context.Context, dir string, transport Transport) (*Detector, error) {
@@ -78,22 +81,31 @@ func loadReference(ctx context.Context, dir, source string) (*reference, error) 
 	}
 	var bank struct {
 		Models []struct {
-			ID string `json:"id"`
+			ID          string `json:"id"`
+			DisplayName string `json:"display_name"`
 		} `json:"models"`
 	}
 	if err := json.Unmarshal(data, &bank); err != nil {
 		return nil, err
 	}
 	models := make([]string, 0, len(bank.Models))
+	var combinedAstraSol bool
 	for _, m := range bank.Models {
 		models = append(models, m.ID)
+		if m.ID == astraModel && strings.Contains(m.DisplayName, "6.1-sol") {
+			combinedAstraSol = true
+		}
 	}
 	slices.Sort(models)
 	builtAt, err := time.Parse(time.RFC3339Nano, engine.BuiltAt())
 	if err != nil {
 		return nil, errors.New("invalid reference build time")
 	}
-	return &reference{engine: engine, models: models, builtAt: builtAt.UTC(), source: source}, nil
+	_, separateSol := slices.BinarySearch(models, guard.ModelGPT61Sol)
+	return &reference{
+		engine: engine, models: models, builtAt: builtAt.UTC(), source: source,
+		sharedAstraSol: combinedAstraSol && !separateSol,
+	}, nil
 }
 
 func (d *Detector) Models() []string { return slices.Clone(d.active.Load().models) }
@@ -106,7 +118,8 @@ func (d *Detector) Check(ctx context.Context, p guard.Probe) guard.Result {
 }
 
 func check(ctx context.Context, p guard.Probe, ref *reference, transport Transport) guard.Result {
-	if _, supported := slices.BinarySearch(ref.models, p.Expected); !supported {
+	expected := ref.expectedModel(p.Expected)
+	if _, supported := slices.BinarySearch(ref.models, expected); !supported {
 		return guard.Result{Status: guard.Unsupported, Reason: "unknown_reference"}
 	}
 	api, protocol := protocolFormat(p.ProbeFormat)
@@ -129,9 +142,23 @@ func check(ctx context.Context, p guard.Probe, ref *reference, transport Transpo
 	if err != nil {
 		return guard.Result{Status: guard.Inconclusive, Reason: "invalid_samples"}
 	}
-	return classify(analysis, p.Expected, p.Probability)
+	return ref.classify(analysis, expected, p.Probability)
 }
 
+func (ref *reference) expectedModel(expected string) string {
+	if expected == guard.ModelGPT61Sol && ref.sharedAstraSol {
+		return astraModel
+	}
+	return expected
+}
+
+func (ref *reference) classify(analysis *lmfpd.Analysis, expected string, threshold float64) guard.Result {
+	r := classify(analysis, expected, threshold)
+	if ref.sharedAstraSol && r.Detected == astraModel {
+		r.DetectedClass = astraModel + " / " + guard.ModelGPT61Sol
+	}
+	return r
+}
 func sampleRound(ctx context.Context, p guard.Probe, transport Transport, protocol string, opts lmfpd.DetectConfig, challenges []lmfpd.Challenge) ([]lmfpd.Output, guard.Result) {
 	outputs := make([]lmfpd.Output, len(challenges))
 	if !p.ParallelChallenges {
