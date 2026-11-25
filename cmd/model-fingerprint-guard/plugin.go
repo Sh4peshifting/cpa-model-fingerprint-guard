@@ -125,7 +125,7 @@ func registration() any {
 		"schema_version": pluginabi.SchemaVersion,
 		"metadata": pluginapi.Metadata{
 			Name: "模型指纹守卫", Version: releaseVersion, Author: "bul1horn",
-			GitHubRepository: "https://github.com/bul1horn/cpa-model-fingerprint-guard",
+			GitHubRepository: "https://github.com/Sh4peshifting/cpa-model-fingerprint-guard",
 		},
 		"capabilities": map[string]bool{
 			"scheduler": true, "scheduler_across_priorities": true,

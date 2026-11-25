@@ -81,7 +81,7 @@ func TestStoreInstallsReleaseZIPs(t *testing.T) {
 				t.Fatal(err)
 			}
 			client := pluginstore.NewClient(releaseHTTP{
-				"https://api.github.com/repos/bul1horn/cpa-model-fingerprint-guard/releases/latest": response,
+				"https://api.github.com/repos/Sh4peshifting/cpa-model-fingerprint-guard/releases/latest": response,
 				download + name:            archive,
 				download + "checksums.txt": checksums,
 			}, "")

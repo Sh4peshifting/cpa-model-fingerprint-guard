@@ -6,7 +6,7 @@
 | --- | --- |
 | `schema_version: 1`，插件 ID 合规且唯一 | `model-fingerprint-guard` 符合命名规则。核对时官方注册表中无同名 ID |
 | `id`、`name`、`description`、`author`、`repository` | `docs/plugin-store-entry.json` 提供完整条目和简体中文描述 |
-| GitHub 仓库格式 | `https://github.com/bul1horn/cpa-model-fingerprint-guard` |
+| GitHub 仓库格式 | `https://github.com/Sh4peshifting/cpa-model-fingerprint-guard` |
 | 最新公开 Release 标签为 `v<数字版本>` | 仓库默认分支的新版本通过 CI 后自动发布 |
 | `<id>_<version>_<goos>_<goarch>.zip` 与 `checksums.txt` | 发布工作流构建并校验完整套件，再用 CLIProxyAPI v8.1.2 安装器检查各平台归档 |
 | ZIP 根目录恰有一个匹配平台扩展名的动态库 | 统一打包脚本校验路径、重复条目及动态库名。许可证和说明可随包分发 |
