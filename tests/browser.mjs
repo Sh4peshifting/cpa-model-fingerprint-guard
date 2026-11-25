@@ -91,6 +91,9 @@ try {
   await evaluate(manualLogin);
   await until(() => evaluate('!document.getElementById("workspace").hidden'));
   assert.equal(await evaluate('document.getElementById("key").value'), '');
+  assert.equal(await evaluate('document.getElementById("runtime-native").textContent'), '开启');
+  assert.equal(await evaluate('document.getElementById("runtime-auto-update").textContent'), '关闭');
+  assert.equal(await evaluate('document.getElementById("runtime-refresh-interval").textContent'), '暂停（已配置 24h0m0s）');
   await emulateTheme('dark');
   await until(() => evaluate('getComputedStyle(document.documentElement).backgroundColor === "rgb(21, 20, 18)"'));
   await emulateTheme('light');

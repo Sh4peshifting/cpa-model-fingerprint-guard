@@ -178,6 +178,37 @@ def get_state(base):
     return None
 
 
+def test_live_plugin_config(base, isolated_id):
+    path = "/v8/management/config/plugins/configs/model-fingerprint-guard"
+    before = get_state(base)
+
+    def apply(changes, expected, probeable):
+        code, body = request(base, path)
+        assert code == 200, (code, body)
+        # The configuration sheet saves a replacement of this plugin's object.
+        config = {key: value for key, value in {**json.loads(body), **changes}.items() if value is not None}
+        code, body = request(base, path, "PUT", config)
+        assert code == 200, (code, body)
+
+        def matching_state():
+            state = get_state(base)
+            if (state and state["runtime_settings"] == expected and len(state["auths"]) == 2
+                    and all(auth["probeable"] == probeable for auth in state["auths"])):
+                return state
+
+        state = wait_for(matching_state)
+        assert state["revision"] == before["revision"]
+        assert any(auth["id"] == isolated_id and auth["isolated"] for auth in state["auths"])
+        assert state["history"]
+        assert state["reference"]["auto_update"] == expected["reference_auto_update"]
+
+    changed = dict(native_diagnostics=False, reference_auto_update=True, reference_refresh_interval="5m0s")
+    apply({"native-diagnostics": False, "reference-auto-update": "true", "reference-refresh-interval": "5m"}, changed, False)
+    apply({"reference-refresh-interval": "5s"}, {**changed, "config_rejected": True}, False)
+    apply({"native-diagnostics": True, "reference-auto-update": "false", "reference-refresh-interval": None},
+          before["runtime_settings"], True)
+
+
 def main():
     args = argparse.ArgumentParser()
     args.add_argument("--host", type=Path, required=True)
@@ -257,6 +288,11 @@ plugins:
         assert request(base, RESOURCE + "/app.js", key=None)[0] == 200
         plugins_status, plugins = request(base, "/v0/management/plugins")
         assert plugins_status == 200 and RESOURCE.encode() in plugins
+        metadata = next(plugin for plugin in json.loads(plugins)["plugins"] if plugin["id"] == "model-fingerprint-guard")
+        fields = {field["name"]: field for field in metadata["config_fields"]}
+        assert fields["native-diagnostics"]["type"] == "boolean"
+        assert fields["reference-auto-update"]["enum_values"] == ["true", "false"]
+        assert fields["reference-refresh-interval"]["default"] == "24h"
         plugin_info = next(info for info in json.loads(plugins)["plugins"] if info["id"] == "model-fingerprint-guard")
         assert plugin_info["metadata"]["author"] == "Sh4peshifting"
         assert plugin_info["metadata"]["github_repository"] == "https://github.com/Sh4peshifting/cpa-model-fingerprint-guard"
@@ -303,6 +339,7 @@ plugins:
             script = Path(__file__).with_name("browser.mjs")
             with run_access_proxy(host_port) as access_base:
                 subprocess.run(["node", str(script), base, access_base], check=True, timeout=40)
+        test_live_plugin_config(base, a)
     with run_host(host, tmp):
         restored = wait_for(lambda: next((s for s in [get_state(base)] if s and len(s["auths"]) == 2), None))
         assert any(x["id"] == a and x["isolated"] for x in restored["auths"])

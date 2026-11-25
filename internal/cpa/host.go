@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Sh4peshifting/cpa-model-fingerprint-guard/internal/fingerprint"
@@ -22,7 +23,7 @@ type Call func(context.Context, string, any, any) error
 
 type Host struct {
 	call   Call
-	native bool
+	native atomic.Bool
 	marker string
 }
 
@@ -36,8 +37,12 @@ func NewHost(call Call, native bool) (*Host, error) {
 	if _, err := rand.Read(token[:]); err != nil {
 		return nil, err
 	}
-	return &Host{call: call, native: native, marker: hex.EncodeToString(token[:])}, nil
+	h := &Host{call: call, marker: hex.EncodeToString(token[:])}
+	h.SetNativeDiagnostics(native)
+	return h, nil
 }
+
+func (h *Host) SetNativeDiagnostics(enabled bool) { h.native.Store(enabled) }
 
 func (h *Host) List(ctx context.Context) ([]guard.Auth, error) {
 	var result struct {
@@ -67,7 +72,7 @@ func (h *Host) auth(a pluginapi.HostAuthFileEntry) guard.Auth {
 		ID: a.ID, Name: a.Name, Provider: strings.ToLower(a.Provider),
 		Disabled:  a.Disabled || a.Status == "disabled",
 		Cooling:   a.Unavailable || a.NextRetryAfter.After(time.Now()),
-		Probeable: h.native && format != "", ProbeFormat: format, Version: hex.EncodeToString(digest[:]),
+		Probeable: h.native.Load() && format != "", ProbeFormat: format, Version: hex.EncodeToString(digest[:]),
 	}
 }
 
@@ -98,7 +103,7 @@ func (h *Host) Recover(context.Context, guard.Auth, guard.Abnormal) error {
 }
 
 func (h *Host) Sample(ctx context.Context, p guard.Probe, protocol string, body []byte) (fingerprint.Response, error) {
-	if !h.native || p.ID == "" || p.Model == "" || p.ProbeFormat == "" || p.ProbeFormat != protocol {
+	if !h.native.Load() || p.ID == "" || p.Model == "" || p.ProbeFormat == "" || p.ProbeFormat != protocol {
 		return fingerprint.Response{}, guard.ErrUnavailable
 	}
 	auths, err := h.List(ctx)

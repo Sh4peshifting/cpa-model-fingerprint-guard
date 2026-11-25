@@ -107,6 +107,22 @@ func (g *Guard) signal() {
 	}
 }
 
+// RefreshInventory cancels probes whose host capabilities may have changed
+// and schedules a new inventory scan without resetting quarantine or history.
+func (g *Guard) RefreshInventory() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for _, j := range g.running {
+		j.cancel()
+	}
+	for id, auth := range g.inventory {
+		auth.Probeable = false
+		g.inventory[id] = auth
+	}
+	g.nextScan = time.Time{}
+	g.signal()
+}
+
 // save runs with mu held. Failed writes leave in-memory quarantine enforced.
 func (g *Guard) save() error {
 	err := saveState(g.path, g.state)
@@ -216,22 +232,20 @@ func (g *Guard) step() {
 	scan := !now.Before(g.nextScan)
 	if scan {
 		g.nextScan = now.Add(seconds(g.state.Config.ScanSeconds))
-	}
-	g.mu.Unlock()
-
-	if scan {
+		g.mu.Unlock()
 		ctx, cancel := context.WithTimeout(g.ctx, 10*time.Second)
 		auths, err := g.host.List(ctx)
 		cancel()
 		g.mu.Lock()
+		if g.nextScan.IsZero() {
+			g.mu.Unlock()
+			return // A reconfiguration invalidated the in-flight scan.
+		}
 		g.listErr = err != nil
 		if err == nil {
 			g.reconcile(now, auths)
 		}
-		g.mu.Unlock()
 	}
-
-	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.ctx.Err() != nil {
 		return
