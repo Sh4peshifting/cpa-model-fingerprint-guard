@@ -33,11 +33,11 @@ initializeTheme();
 
 const translations = {
   normal: '正常', isolated: '隔离', cooling: '宿主冷却', disabled: '已停用',
-  match: '匹配', mismatch: '不一致', inconclusive: '证据不足', transient: '暂时失败',
+  match: '一致', mismatch: '不一致', inconclusive: '证据不足', transient: '失败',
   unsupported: '不支持', cancelled: '已取消', error: '上游异常', manual: '手动操作',
   idle: '空闲检测', confirm: '复核', http_status: 'HTTP 状态', error_code: '错误代码',
   recheck: '隔离后自动复检', recheck_kept_isolated: '复检未通过，保持隔离',
-  error_text: '错误文本', matched: '匹配，解除插件隔离', recorded: '已记录',
+  error_text: '错误文本', matched: '一致，解除插件隔离', recorded: '已记录',
   confirm_again: '等待复核', different_model: '测试模型与异常模型不同，等待人工',
   confirmed_isolation: '已确认不一致，保持隔离',
   held_by_policy: '保持隔离', host_mutation_unavailable: '保持隔离', host_write_failed: '保持隔离',
