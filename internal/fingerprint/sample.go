@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/bul1horn/cpa-model-fingerprint-guard/internal/guard"
+	"github.com/Sh4peshifting/cpa-model-fingerprint-guard/internal/guard"
 )
 
 // decodeSample adapts the host's normalized JSON response. The SDK performs the

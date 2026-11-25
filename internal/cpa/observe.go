@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/bul1horn/cpa-model-fingerprint-guard/internal/guard"
+	"github.com/Sh4peshifting/cpa-model-fingerprint-guard/internal/guard"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
 

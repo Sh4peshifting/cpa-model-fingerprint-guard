@@ -13,9 +13,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/bul1horn/cpa-model-fingerprint-guard/internal/cpa"
-	"github.com/bul1horn/cpa-model-fingerprint-guard/internal/fingerprint"
-	"github.com/bul1horn/cpa-model-fingerprint-guard/internal/guard"
+	"github.com/Sh4peshifting/cpa-model-fingerprint-guard/internal/cpa"
+	"github.com/Sh4peshifting/cpa-model-fingerprint-guard/internal/fingerprint"
+	"github.com/Sh4peshifting/cpa-model-fingerprint-guard/internal/guard"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 	"go.yaml.in/yaml/v3"

@@ -1,4 +1,4 @@
-module github.com/bul1horn/cpa-model-fingerprint-guard
+module github.com/Sh4peshifting/cpa-model-fingerprint-guard
 
 go 1.26.10
 

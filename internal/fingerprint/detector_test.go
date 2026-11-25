@@ -8,7 +8,7 @@ import (
 	"time"
 
 	lmfpd "github.com/Ikaleio/lm-detector/sdk/go"
-	"github.com/bul1horn/cpa-model-fingerprint-guard/internal/guard"
+	"github.com/Sh4peshifting/cpa-model-fingerprint-guard/internal/guard"
 )
 
 func TestClassificationRequiresValidCalibratedRound(t *testing.T) {

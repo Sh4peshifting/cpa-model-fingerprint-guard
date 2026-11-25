@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bul1horn/cpa-model-fingerprint-guard/internal/guard"
+	"github.com/Sh4peshifting/cpa-model-fingerprint-guard/internal/guard"
 	"github.com/klauspost/compress/zstd"
 )
 
