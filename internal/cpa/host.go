@@ -6,8 +6,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -70,8 +72,8 @@ func (h *Host) auth(a pluginapi.HostAuthFileEntry) guard.Auth {
 	digest := sha256.Sum256([]byte(snapshot))
 	return guard.Auth{
 		ID: a.ID, Name: a.Name, Provider: strings.ToLower(a.Provider),
-		Disabled:  a.Disabled || a.Status == "disabled",
-		Cooling:   a.Unavailable || a.NextRetryAfter.After(time.Now()),
+		Disabled: a.Disabled || a.Status == "disabled",
+		Cooling:  a.Unavailable || a.NextRetryAfter.After(time.Now()), CooldownUntil: a.NextRetryAfter.UTC(),
 		Probeable: h.native.Load() && format != "", ProbeFormat: format, Version: hex.EncodeToString(digest[:]),
 	}
 }
@@ -92,16 +94,6 @@ func nativeFormat(provider, kind string) string {
 	}
 }
 
-func (h *Host) CanMutate() bool { return false }
-
-func (h *Host) Disable(context.Context, guard.Auth, guard.Abnormal) error {
-	return guard.ErrUnavailable
-}
-
-func (h *Host) Recover(context.Context, guard.Auth, guard.Abnormal) error {
-	return guard.ErrUnavailable
-}
-
 func (h *Host) Sample(ctx context.Context, p guard.Probe, protocol string, body []byte) (fingerprint.Response, error) {
 	if !h.native.Load() || p.ID == "" || p.Model == "" || p.ProbeFormat == "" || p.ProbeFormat != protocol {
 		return fingerprint.Response{}, guard.ErrUnavailable
@@ -113,6 +105,9 @@ func (h *Host) Sample(ctx context.Context, p guard.Probe, protocol string, body 
 	var valid bool
 	for _, a := range auths {
 		if a.ID == p.ID && a.Version == p.Version && a.Provider == p.Provider && !a.Disabled && a.Probeable {
+			if a.CooldownUntil.After(time.Now()) {
+				return fingerprint.Response{CooldownUntil: a.CooldownUntil}, guard.ErrUnavailable
+			}
 			valid = true
 			break
 		}
@@ -130,11 +125,37 @@ func (h *Host) Sample(ctx context.Context, p guard.Probe, protocol string, body 
 		var rpcErr *pluginabi.Error
 		if errors.As(err, &rpcErr) {
 			// The body is only inspected for overload. The detector never stores it.
-			return fingerprint.Response{Status: rpcErr.HTTPStatus, Body: []byte(rpcErr.Message)}, err
+			return fingerprint.Response{
+				Status: rpcErr.HTTPStatus, Body: []byte(rpcErr.Message),
+				CooldownUntil: modelCooldownUntil(rpcErr, p.Model, time.Now().UTC()),
+			}, err
 		}
 		return fingerprint.Response{}, err
 	}
 	return fingerprint.Response{Status: result.StatusCode, Body: result.Body}, nil
+}
+
+func modelCooldownUntil(err *pluginabi.Error, model string, now time.Time) time.Time {
+	// Native model cooldown is carried in the pinned execution's structured
+	// error. An upstream Retry-After alone does not establish a CPA cooldown.
+	if err.HTTPStatus != http.StatusTooManyRequests || len(err.Message) > 16<<10 {
+		return time.Time{}
+	}
+	var payload struct {
+		Error struct {
+			Code         string `json:"code"`
+			Model        string `json:"model"`
+			ResetSeconds int64  `json:"reset_seconds"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(err.Message), &payload) != nil || payload.Error.Code != "model_cooldown" || payload.Error.Model != model {
+		return time.Time{}
+	}
+	seconds := payload.Error.ResetSeconds
+	if seconds <= 0 || seconds > math.MaxInt64/int64(time.Second) {
+		return time.Time{}
+	}
+	return now.Add(time.Duration(seconds) * time.Second)
 }
 
 func (h *Host) ownProbe(meta map[string]any, headers http.Header) bool {

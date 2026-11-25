@@ -4,11 +4,33 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/Sh4peshifting/cpa-model-fingerprint-guard/internal/guard"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
+
+func TestModelCooldownRequiresMatchingCPAResponse(t *testing.T) {
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	message := `{"error":{"code":"model_cooldown","model":"business-alias","reset_seconds":31}}`
+	for _, tc := range []struct {
+		status  int
+		message string
+		model   string
+		want    time.Time
+	}{
+		{http.StatusTooManyRequests, message, "business-alias", now.Add(31 * time.Second)},
+		{http.StatusTooManyRequests, message, "other-alias", time.Time{}},
+		{http.StatusBadGateway, message, "business-alias", time.Time{}},
+		{http.StatusTooManyRequests, `{"error":{"code":"rate_limit_exceeded","model":"business-alias","reset_seconds":31}}`, "business-alias", time.Time{}},
+	} {
+		err := &pluginabi.Error{HTTPStatus: tc.status, Message: tc.message}
+		if got := modelCooldownUntil(err, tc.model, now); !got.Equal(tc.want) {
+			t.Errorf("modelCooldownUntil(%d, %s, %s) = %s, want %s", tc.status, tc.message, tc.model, got, tc.want)
+		}
+	}
+}
 
 func TestHostCallbackUsesPinAndRejectsChangedAuth(t *testing.T) {
 	var calls int

@@ -39,10 +39,12 @@ const translations = {
   recheck: '隔离后自动复检', recheck_kept_isolated: '复检未通过，保持隔离',
   error_text: '错误文本', matched: '匹配，解除插件隔离', recorded: '已记录',
   confirm_again: '等待复核', different_model: '测试模型与异常模型不同，等待人工',
-  held_by_policy: '保持隔离', host_mutation_unavailable: '保持隔离，宿主写入接口不可用',
-  persistence_failed: '状态写入失败', host_write_failed: '宿主写入失败',
+  confirmed_isolation: '已确认不一致，保持隔离',
+  held_by_policy: '保持隔离', host_mutation_unavailable: '保持隔离', host_write_failed: '保持隔离',
+  persistence_failed: '状态写入失败',
   held_unsupported: '不支持检测，等待人工', retries_exhausted: '重试耗尽',
-  retry_scheduled: '等待重试',
+  retry_scheduled: '等待重试', cooldown_wait: '等待宿主冷却结束',
+  gateway_recheck: '业务异常恢复复检', gateway_recheck_scheduled: '保持隔离，等待恢复复检',
 };
 const translate = value => translations[value] || value || '—';
 const localTime = value => value ? new Date(value).toLocaleString() : '—';
@@ -296,7 +298,7 @@ function render() {
     ['隔离', auths.filter(a => a.isolated && !a.disabled).length, 'lock'],
     ['检测中', auths.filter(a => a.running).length, 'probe'],
     ['待检测', auths.filter(a => a.pending && !a.running).length, 'history'],
-    ['插件停用', auths.filter(a => a.abnormal?.plugin_disabled && a.disabled).length, 'file'],
+    ['宿主冷却', auths.filter(a => a.cooling && !a.disabled).length, 'probe'],
     ['待人工处理', auths.filter(a => a.held && !a.disabled && !a.next_recheck).length, 'alert'],
   ];
   byId('metrics').replaceChildren(...metrics.map(([label, value, glyph]) => {
@@ -315,7 +317,6 @@ function render() {
     warnings.push(['history', '参考库构建于 ' + localTime(view.reference.built_at)]);
     if (view.reference.last_check_failed) warnings.push(['alert', '参考库更新失败，保留当前版本。']);
   }
-  if (!view.can_mutate) warnings.push(['shield', '当前宿主会保留已确认异常的隔离状态，永久停用由管理员处理。']);
   if (view.storage_error) warnings.push(['alert', '持久化失败，请检查状态目录权限和磁盘空间。']);
   if (view.inventory_error) warnings.push(['alert', '认证清单读取失败，检测已暂停。']);
   if (view.overload_until) warnings.push(['alert', '全局过载保护至 ' + localTime(view.overload_until)]);
@@ -408,12 +409,9 @@ function credentialParts(a) {
     actionButton('设置', 'settings', 'settings', () => editAuth(a)),
     actionButton('检测', 'check', 'probe', () => action('check', [a.id]), a.disabled || !a.policy.enabled || !a.probeable || a.running),
     a.isolated
-      ? actionButton('解除隔离', 'release', 'unlock', () => action('release', [a.id], true), a.abnormal?.plugin_disabled)
+      ? actionButton('解除隔离', 'release', 'unlock', () => action('release', [a.id], true))
       : actionButton('隔离', 'isolate', 'lock', () => action('isolate', [a.id], true), a.disabled),
   );
-  if (view.can_mutate && a.abnormal?.plugin_disabled && a.disabled) {
-    actions.append(actionButton('恢复认证', 'recover', 'check', () => action('recover', [a.id], true)));
-  }
   return { checkbox, identity, status, models, result, actions };
 }
 function credential(a) {
@@ -636,6 +634,7 @@ const settingsGroups = {
   '扫描与复检': {
     scan_seconds: ['扫描周期（秒）', 'number'], idle_seconds: ['空闲阈值（秒）', 'number'],
     interval_seconds: ['最短检测间隔（秒）', 'number'], mismatch_recheck_seconds: ['不一致复检间隔（秒）', 'number'],
+    gateway_recheck_seconds: ['业务异常恢复复检间隔（秒）', 'number'],
     timeout_seconds: ['单次挑战超时（秒）', 'number'], jitter_seconds: ['最大抖动（秒）', 'number'],
   },
   '异常触发': {
@@ -645,10 +644,9 @@ const settingsGroups = {
   },
   '判定与隔离': {
     min_probability: ['参考库内最小校准概率', 'number'], confirm_rounds: ['连续不一致确认轮数', 'number'],
-    auto_disable: ['确认后自动停用', 'bool'],
-    max_isolation_seconds: ['自动隔离期限（秒）', 'number'], expiry: ['隔离期限到期策略', 'expiry'],
   },
   '并发与重试': {
+    parallel_challenges: ['并行执行三道挑战', 'bool'],
     max_concurrent: ['全局最大检测并发', 'number'], per_provider: ['单提供商最大检测并发', 'number'],
     retry_seconds: ['首次重试间隔（秒）', 'number'], max_retry_seconds: ['最大退避间隔（秒）', 'number'],
     max_retries: ['最大重试次数', 'number'],
@@ -663,9 +661,9 @@ function field(container, name, spec, value, inherit = false) {
   const [label, type] = spec;
   const wrapper = element('label', label);
   let input;
-  if (type === 'bool' || type === 'expiry') {
+  if (type === 'bool') {
     input = element('select');
-    const choices = type === 'expiry' ? [['hold', '等待人工'], ['release', '到期解除']] : [['true', '开启'], ['false', '关闭']];
+    const choices = [['true', '开启'], ['false', '关闭']];
     if (inherit) choices.unshift(['', '继承']);
     for (const [v, text] of choices) input.append(element('option', text, { value: v }));
     input.value = value == null ? '' : String(value);
@@ -682,10 +680,6 @@ function field(container, name, spec, value, inherit = false) {
       input.required = true;
     }
     if (inherit) input.placeholder = '留空继承';
-  }
-  if (name === 'auto_disable' && !view.can_mutate) {
-    input.disabled = true;
-    wrapper.append(element('small', '当前宿主缺少原子认证修改接口'));
   }
   input.name = name;
   input.dataset.type = type;

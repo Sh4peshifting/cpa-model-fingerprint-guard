@@ -2,13 +2,11 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/Sh4peshifting/cpa-model-fingerprint-guard/internal/fingerprint"
 	"github.com/Sh4peshifting/cpa-model-fingerprint-guard/internal/guard"
@@ -40,10 +38,15 @@ func (p *runtime) manage(r pluginapi.ManagementRequest) pluginapi.ManagementResp
 	case r.Method == "GET" && r.Path == apiPath+"/state":
 		return jsonResponse(200, p.status())
 	case r.Method == "PUT" && r.Path == apiPath+"/settings":
+		current := p.View().Config
 		in := struct {
 			Revision uint64       `json:"revision"`
 			Settings guard.Config `json:"settings"`
-		}{Settings: guard.Config{MismatchRecheckSeconds: p.View().Config.MismatchRecheckSeconds}}
+		}{Settings: guard.Config{
+			MismatchRecheckSeconds: current.MismatchRecheckSeconds,
+			GatewayRecheckSeconds:  current.GatewayRecheckSeconds,
+			ParallelChallenges:     current.ParallelChallenges,
+		}}
 		if !decodeManagement(r.Body, &in) {
 			return errorResponse(400, "配置请求格式错误")
 		}
@@ -75,16 +78,14 @@ func (p *runtime) manage(r pluginapi.ManagementRequest) pluginapi.ManagementResp
 			return errorResponse(400, "一次可操作 1 至 250 项认证")
 		}
 		switch in.Action {
-		case "check", "isolate", "release", "recover":
+		case "check", "isolate", "release":
 		default:
 			return errorResponse(400, "未知操作")
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
 		perAuth := make(map[string]string, len(in.IDs))
 		for _, id := range in.IDs {
 			if _, done := perAuth[id]; !done {
-				perAuth[id] = publicError(p.Act(ctx, in.Action, id))
+				perAuth[id] = publicError(p.Act(in.Action, id))
 			}
 		}
 		return jsonResponse(200, map[string]any{"results": perAuth})

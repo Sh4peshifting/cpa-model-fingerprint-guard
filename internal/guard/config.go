@@ -63,19 +63,23 @@ type Config struct {
 	ErrorTexts      []string            `json:"error_texts" yaml:"error_texts"`
 	MinProbability  float64             `json:"min_probability" yaml:"min_probability"`
 	ConfirmRounds   int                 `json:"confirm_rounds" yaml:"confirm_rounds"`
-	AutoDisable     bool                `json:"auto_disable" yaml:"auto_disable"`
 	MaxConcurrent   int                 `json:"max_concurrent" yaml:"max_concurrent"`
 	PerProvider     int                 `json:"per_provider" yaml:"per_provider"`
 	RetrySeconds    int                 `json:"retry_seconds" yaml:"retry_seconds"`
 	MaxRetrySeconds int                 `json:"max_retry_seconds" yaml:"max_retry_seconds"`
 	MaxRetries      int                 `json:"max_retries" yaml:"max_retries"`
-	MaxIsolation    int                 `json:"max_isolation_seconds" yaml:"max_isolation_seconds"`
-	Expiry          string              `json:"expiry" yaml:"expiry"`
 	OverloadLimit   int                 `json:"overload_limit" yaml:"overload_limit"`
 	OverloadPause   int                 `json:"overload_pause_seconds" yaml:"overload_pause_seconds"`
 	HistoryLimit    int                 `json:"history_limit" yaml:"history_limit"`
 
-	MismatchRecheckSeconds int `json:"mismatch_recheck_seconds" yaml:"mismatch_recheck_seconds"`
+	MismatchRecheckSeconds int  `json:"mismatch_recheck_seconds" yaml:"mismatch_recheck_seconds"`
+	GatewayRecheckSeconds  int  `json:"gateway_recheck_seconds" yaml:"gateway_recheck_seconds"`
+	ParallelChallenges     bool `json:"parallel_challenges" yaml:"parallel_challenges"`
+
+	// Accept retired keys in existing host YAML. They have no runtime effect.
+	LegacyAutoDisable bool   `json:"-" yaml:"auto_disable,omitempty"`
+	LegacyIsolation   int    `json:"-" yaml:"max_isolation_seconds,omitempty"`
+	LegacyExpiry      string `json:"-" yaml:"expiry,omitempty"`
 }
 
 func DefaultConfig() Config {
@@ -84,12 +88,13 @@ func DefaultConfig() Config {
 		Providers: map[string]Override{}, Auths: map[string]Override{}, ExpectedModels: map[string]string{},
 		ScanSeconds: 60, IdleSeconds: 1800, IntervalSeconds: 21600, TimeoutSeconds: 90,
 		MismatchRecheckSeconds: 2 * 24 * 60 * 60,
+		GatewayRecheckSeconds:  60 * 60,
 		JitterSeconds:          10, DedupeSeconds: 10, TriggerCount: 1, HTTPStatuses: []int{502, 503},
 		ErrorCodes:     []string{"server_is_overloaded"},
 		ErrorTexts:     []string{"Our servers are currently overloaded. Please try again later."},
-		MinProbability: .9, ConfirmRounds: 2, AutoDisable: true,
+		MinProbability: .9, ConfirmRounds: 2,
 		MaxConcurrent: 2, PerProvider: 1, RetrySeconds: 60, MaxRetrySeconds: 900, MaxRetries: 5,
-		MaxIsolation: 7200, Expiry: "hold", OverloadLimit: 3, OverloadPause: 120, HistoryLimit: 500,
+		OverloadLimit: 3, OverloadPause: 120, HistoryLimit: 500,
 	}
 }
 
@@ -125,6 +130,7 @@ func (c Config) Validate() error {
 		{"idle_seconds", c.IdleSeconds, 1, 2592000},
 		{"interval_seconds", c.IntervalSeconds, 1, 2592000},
 		{"mismatch_recheck_seconds", c.MismatchRecheckSeconds, 1, 2592000},
+		{"gateway_recheck_seconds", c.GatewayRecheckSeconds, 1, 2592000},
 		{"timeout_seconds", c.TimeoutSeconds, 1, 600},
 		{"jitter_seconds", c.JitterSeconds, 0, 3600},
 		{"dedupe_seconds", c.DedupeSeconds, 0, 3600},
@@ -135,7 +141,6 @@ func (c Config) Validate() error {
 		{"retry_seconds", c.RetrySeconds, 1, 86400},
 		{"max_retry_seconds", c.MaxRetrySeconds, c.RetrySeconds, 86400},
 		{"max_retries", c.MaxRetries, 0, 100},
-		{"max_isolation_seconds", c.MaxIsolation, 1, 2592000},
 		{"overload_limit", c.OverloadLimit, 1, 100},
 		{"overload_pause_seconds", c.OverloadPause, 1, 86400},
 		{"history_limit", c.HistoryLimit, 1, 10000},
@@ -147,9 +152,6 @@ func (c Config) Validate() error {
 	}
 	if !(c.MinProbability > 0 && c.MinProbability <= 1) {
 		return errors.New("min_probability 必须大于 0 且不超过 1")
-	}
-	if c.Expiry != "hold" && c.Expiry != "release" {
-		return errors.New("expiry 必须为 hold 或 release")
 	}
 	for _, status := range c.HTTPStatuses {
 		if status < 400 || status > 599 {
