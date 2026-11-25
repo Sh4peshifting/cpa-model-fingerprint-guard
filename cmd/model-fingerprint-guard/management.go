@@ -38,10 +38,7 @@ func (p *runtime) manage(r pluginapi.ManagementRequest) pluginapi.ManagementResp
 	}
 	switch {
 	case r.Method == "GET" && r.Path == apiPath+"/state":
-		return jsonResponse(200, struct {
-			guard.View
-			Reference fingerprint.ReferenceInfo `json:"reference"`
-		}{View: p.View(), Reference: p.references.Info()})
+		return jsonResponse(200, p.status())
 	case r.Method == "PUT" && r.Path == apiPath+"/settings":
 		in := struct {
 			Revision uint64       `json:"revision"`
@@ -94,6 +91,29 @@ func (p *runtime) manage(r pluginapi.ManagementRequest) pluginapi.ManagementResp
 	default:
 		return errorResponse(404, "管理接口不存在")
 	}
+}
+
+type runtimeSettings struct {
+	NativeDiagnostics        bool   `json:"native_diagnostics"`
+	ReferenceAutoUpdate      bool   `json:"reference_auto_update"`
+	ReferenceRefreshInterval string `json:"reference_refresh_interval"`
+	ConfigRejected           bool   `json:"config_rejected,omitempty"`
+}
+
+func (p *runtime) status() any {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	reference := p.references.Info()
+	return struct {
+		guard.View
+		Reference fingerprint.ReferenceInfo `json:"reference"`
+		Runtime   runtimeSettings           `json:"runtime_settings"`
+	}{View: p.View(), Reference: reference, Runtime: runtimeSettings{
+		NativeDiagnostics:        p.options.Native,
+		ReferenceAutoUpdate:      reference.Updating,
+		ReferenceRefreshInterval: p.options.ReferenceInterval.String(),
+		ConfigRejected:           p.configRejected,
+	}}
 }
 
 func decodeManagement(body []byte, out any) bool {

@@ -215,6 +215,7 @@ window.setInterval(() => {
 }, 3000);
 const tabs = [...document.querySelectorAll('[role="tab"]')];
 function openTab(tab, focus = false) {
+  tab.parentElement.dataset.activeTab = tab.dataset.tab;
   for (const peer of tabs) {
     const active = peer === tab;
     byId(peer.dataset.tab).hidden = !active;
@@ -269,6 +270,16 @@ function resultBadge(status) {
   const tones = { match: 'normal', mismatch: 'disabled', transient: 'cooling', inconclusive: 'cooling' };
   return badge(translate(status), tones[status] || '');
 }
+function renderRuntimeOptions() {
+  const current = view.runtime_settings;
+  byId('runtime-options').hidden = !current;
+  if (!current) return;
+  byId('runtime-native').textContent = current.native_diagnostics ? '开启' : '关闭';
+  byId('runtime-auto-update').textContent = current.reference_auto_update ? '开启' : '关闭';
+  const interval = current.reference_refresh_interval;
+  byId('runtime-refresh-interval').textContent = current.reference_auto_update ? interval : '暂停（已配置 ' + interval + '）';
+  byId('runtime-config-error').hidden = !current.config_rejected;
+}
 function stateName(a) {
   if (a.disabled) return 'disabled';
   if (a.isolated) return 'isolated';
@@ -276,6 +287,7 @@ function stateName(a) {
   return 'normal';
 }
 function render() {
+  renderRuntimeOptions();
   const auths = view.auths;
   const metrics = [
     ['认证文件', auths.length, 'file'],

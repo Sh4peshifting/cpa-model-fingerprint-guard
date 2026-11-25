@@ -52,7 +52,7 @@
   </header>
   <p id="notice" role="status" aria-live="polite" hidden></p>
   <div id="workspace" hidden>
-    <nav role="tablist" aria-label="管理页面">
+    <nav role="tablist" aria-label="管理页面" data-active-tab="overview">
       <button type="button" id="tab-overview" data-tab="overview" role="tab" aria-controls="overview" aria-selected="true"><svg class="icon" aria-hidden="true"><use href="#icon-overview"></use></svg>运行概览</button>
       <button type="button" id="tab-auth" data-tab="auth" role="tab" aria-controls="auth" aria-selected="false" tabindex="-1"><svg class="icon" aria-hidden="true"><use href="#icon-file"></use></svg>认证管理</button>
       <button type="button" id="tab-settings" data-tab="settings" role="tab" aria-controls="settings" aria-selected="false" tabindex="-1"><svg class="icon" aria-hidden="true"><use href="#icon-settings"></use></svg>检测设置</button>
@@ -65,6 +65,15 @@
         <span class="badge" id="guard-status"></span>
       </div>
       <div id="metrics"></div>
+      <section class="panel runtime-panel" id="runtime-options" aria-labelledby="runtime-title" hidden>
+        <h2 id="runtime-title">宿主生效配置</h2>
+        <dl class="runtime-values">
+          <div><dt><code>native-diagnostics</code></dt><dd id="runtime-native"></dd></div>
+          <div><dt><code>reference-auto-update</code></dt><dd id="runtime-auto-update"></dd></div>
+          <div><dt><code>reference-refresh-interval</code></dt><dd id="runtime-refresh-interval"></dd></div>
+        </dl>
+        <p class="form-error" id="runtime-config-error" role="status" hidden>最近保存的宿主配置未能生效，当前显示上一次生效值。</p>
+      </section>
       <div class="panel">
         <div class="section-heading">
           <h2>最近异常</h2>

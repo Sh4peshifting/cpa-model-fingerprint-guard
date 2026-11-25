@@ -34,6 +34,8 @@ type Updater struct {
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
 	mu       sync.Mutex
+	changed  chan struct{}
+	abort    context.CancelFunc
 	last     time.Time
 	failed   bool
 }
@@ -42,11 +44,8 @@ type Updater struct {
 // reference. Network requests begin only after Start.
 func NewUpdater(d *Detector, stateDir string, interval time.Duration) *Updater {
 	ctx, cancel := context.WithCancel(context.Background())
-	u := &Updater{detector: d, interval: interval, ctx: ctx, cancel: cancel}
-	if interval <= 0 {
-		return u
-	}
-	u.cache = filepath.Join(stateDir, "reference-cache.json")
+	u := &Updater{detector: d, interval: interval, ctx: ctx, cancel: cancel,
+		cache: filepath.Join(stateDir, "reference-cache.json"), changed: make(chan struct{})}
 	u.sources = publishedSources
 	u.client = &http.Client{
 		Timeout: 25 * time.Second,
@@ -57,21 +56,37 @@ func NewUpdater(d *Detector, stateDir string, interval time.Duration) *Updater {
 			return nil
 		},
 	}
-	if ref, err := restoreReference(ctx, u.cache); err == nil && ref.builtAt.After(d.active.Load().builtAt) {
-		d.active.Store(ref)
+	if interval > 0 {
+		if ref, err := restoreReference(ctx, u.cache); err == nil && ref.builtAt.After(d.active.Load().builtAt) {
+			d.active.Store(ref)
+		}
 	}
 	return u
 }
 
 func (u *Updater) Start() {
-	if u.interval > 0 {
-		u.wg.Go(u.run)
-	}
+	u.wg.Go(u.run)
 }
 
 func (u *Updater) Close() {
 	u.cancel()
 	u.wg.Wait()
+}
+
+// SetInterval changes the live schedule. Zero pauses downloads and retains the
+// current reference. A new schedule starts with a check.
+func (u *Updater) SetInterval(interval time.Duration) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.interval == interval {
+		return
+	}
+	u.interval = interval
+	if u.abort != nil {
+		u.abort()
+	}
+	close(u.changed)
+	u.changed = make(chan struct{})
 }
 
 func (u *Updater) Info() ReferenceInfo {
@@ -86,10 +101,26 @@ func (u *Updater) Info() ReferenceInfo {
 
 func (u *Updater) run() {
 	for u.ctx.Err() == nil {
+		u.mu.Lock()
+		interval, changed := u.interval, u.changed
+		if interval <= 0 {
+			u.mu.Unlock()
+			select {
+			case <-u.ctx.Done():
+				return
+			case <-changed:
+				continue
+			}
+		}
 		ctx, cancel := context.WithTimeout(u.ctx, 2*time.Minute)
+		u.abort = cancel
+		u.mu.Unlock()
 		err := u.refresh(ctx)
 		cancel()
-		wait := u.interval
+		u.mu.Lock()
+		u.abort = nil
+		u.mu.Unlock()
+		wait := interval
 		if err != nil {
 			wait = min(wait, time.Hour)
 		}
@@ -98,6 +129,8 @@ func (u *Updater) run() {
 		case <-u.ctx.Done():
 			timer.Stop()
 			return
+		case <-changed:
+			timer.Stop()
 		case <-timer.C:
 		}
 	}
@@ -106,8 +139,10 @@ func (u *Updater) run() {
 func (u *Updater) refresh(ctx context.Context) (err error) {
 	defer func() {
 		u.mu.Lock()
-		u.last, u.failed = time.Now().UTC(), err != nil
-		u.mu.Unlock()
+		defer u.mu.Unlock()
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			u.last, u.failed = time.Now().UTC(), err != nil
+		}
 	}()
 	current := u.detector.active.Load()
 	for _, source := range u.sources {
@@ -120,6 +155,11 @@ func (u *Updater) refresh(ctx context.Context) (err error) {
 		}
 		if next == nil {
 			return nil
+		}
+		u.mu.Lock()
+		defer u.mu.Unlock()
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		if err := saveReference(u.cache, data); err != nil {
 			return fmt.Errorf("save reference: %w", err)

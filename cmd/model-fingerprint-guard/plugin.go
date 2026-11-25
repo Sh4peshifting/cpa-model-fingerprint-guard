@@ -1,47 +1,32 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
-	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/Sh4peshifting/cpa-model-fingerprint-guard/internal/cpa"
 	"github.com/Sh4peshifting/cpa-model-fingerprint-guard/internal/fingerprint"
 	"github.com/Sh4peshifting/cpa-model-fingerprint-guard/internal/guard"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
-	"go.yaml.in/yaml/v3"
 )
 
 const pluginID = "model-fingerprint-guard"
 
 var releaseVersion = "0.1.0-dev"
 
-type pluginOptions struct {
-	Enabled             bool          `yaml:"enabled"`
-	Priority            int           `yaml:"priority"`
-	Store               yaml.Node     `yaml:"store"`
-	StateDir            string        `yaml:"state-dir"`
-	ReferenceAutoUpdate bool          `yaml:"reference-auto-update"`
-	ReferenceInterval   time.Duration `yaml:"reference-refresh-interval"`
-	ReferenceDir        string        `yaml:"reference-dir"`
-	Native              bool          `yaml:"native-diagnostics"`
-	Settings            guard.Config  `yaml:"settings"`
-}
-
 type runtime struct {
 	*guard.Guard
 	*cpa.Observer
-	options    pluginOptions
-	references *fingerprint.Updater
+	mu             sync.RWMutex
+	host           *cpa.Host
+	options        pluginOptions
+	configRejected bool
+	references     *fingerprint.Updater
 }
 
 var (
@@ -60,42 +45,15 @@ func loadPlugin(input []byte, call cpa.Call) (any, error) {
 	if req.Schema != pluginabi.SchemaVersion {
 		return nil, errors.New("requires the CLIProxyAPI v8.1.2 plugin schema")
 	}
-	o := pluginOptions{
-		StateDir: ".model-fingerprint-guard", Settings: guard.DefaultConfig(),
-		ReferenceAutoUpdate: true, ReferenceInterval: 24 * time.Hour,
-	}
-	if len(req.Config) > 0 {
-		dec := yaml.NewDecoder(bytes.NewReader(req.Config))
-		dec.KnownFields(true)
-		if err := dec.Decode(&o); err != nil {
-			return nil, fmt.Errorf("invalid plugin configuration: %w", err)
-		}
-		if err := dec.Decode(new(any)); err != io.EOF {
-			return nil, errors.New("only one YAML document is allowed")
-		}
-	}
-	if dir := os.Getenv("MODEL_FINGERPRINT_GUARD_STATE_DIR"); dir != "" {
-		o.StateDir = dir
-	}
-	if o.StateDir == "" {
-		return nil, errors.New("state-dir must be a local directory")
-	}
-	if o.ReferenceInterval < time.Minute || o.ReferenceInterval > 30*24*time.Hour {
-		return nil, errors.New("reference-refresh-interval must be between 1m and 720h")
-	}
-	if err := o.Settings.Validate(); err != nil {
-		return nil, err
-	}
-
+	o, err := decodePluginOptions(req.Config)
 	lifecycle.Lock()
 	defer lifecycle.Unlock()
-	old := instance.Load()
-	if old != nil {
-		if old.options.StateDir != o.StateDir || old.options.ReferenceDir != o.ReferenceDir || old.options.Native != o.Native ||
-			old.options.ReferenceAutoUpdate != o.ReferenceAutoUpdate || old.options.ReferenceInterval != o.ReferenceInterval {
-			return nil, errors.New("restart CLIProxyAPI to change state, reference, or native diagnostics options")
-		}
+	if old := instance.Load(); old != nil {
+		old.applyOptions(o, err)
 		return registration(), nil
+	}
+	if err != nil {
+		return nil, err
 	}
 	h, err := cpa.NewHost(call, o.Native)
 	if err != nil {
@@ -109,12 +67,8 @@ func loadPlugin(input []byte, call cpa.Call) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	interval := o.ReferenceInterval
-	if !o.ReferenceAutoUpdate || o.ReferenceDir != "" {
-		interval = 0
-	}
-	updater := fingerprint.NewUpdater(d, o.StateDir, interval)
-	instance.Store(&runtime{Guard: g, Observer: cpa.NewObserver(g, h), options: o, references: updater})
+	updater := fingerprint.NewUpdater(d, o.StateDir, o.updateInterval())
+	instance.Store(&runtime{Guard: g, Observer: cpa.NewObserver(g, h), host: h, options: o, references: updater})
 	updater.Start()
 	g.Start()
 	return registration(), nil
@@ -126,6 +80,7 @@ func registration() any {
 		"metadata": pluginapi.Metadata{
 			Name: "模型指纹守卫", Version: releaseVersion, Author: "Sh4peshifting",
 			GitHubRepository: "https://github.com/Sh4peshifting/cpa-model-fingerprint-guard",
+			ConfigFields:     configFields(),
 		},
 		"capabilities": map[string]bool{
 			"scheduler": true, "scheduler_across_priorities": true,

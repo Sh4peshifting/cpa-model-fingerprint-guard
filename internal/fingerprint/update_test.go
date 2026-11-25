@@ -131,6 +131,41 @@ func TestReferenceWorkerCancelsOnClose(t *testing.T) {
 	}
 }
 
+func TestReferenceWorkerAppliesLiveSchedule(t *testing.T) {
+	started, canceled := make(chan struct{}, 3), make(chan struct{}, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		started <- struct{}{}
+		<-r.Context().Done()
+		canceled <- struct{}{}
+	}))
+	defer server.Close()
+	d := &Detector{}
+	original := &reference{builtAt: time.Now(), source: "embedded"}
+	d.active.Store(original)
+	u := NewUpdater(d, t.TempDir(), 0)
+	defer u.Close()
+	u.client, u.sources = server.Client(), []string{server.URL + "/"}
+	u.Start()
+	wait := func(event <-chan struct{}, description string) {
+		t.Helper()
+		select {
+		case <-event:
+		case <-time.After(2 * time.Second):
+			t.Fatal(description)
+		}
+	}
+	u.SetInterval(time.Hour)
+	wait(started, "enabling updates did not start a check")
+	u.SetInterval(2 * time.Hour)
+	wait(canceled, "changing the interval did not cancel the old check")
+	wait(started, "changing the interval did not start the new schedule")
+	u.SetInterval(0)
+	wait(canceled, "pausing updates did not cancel the check")
+	if info := u.Info(); info.Updating || info.Failed || !info.LastCheck.IsZero() || d.active.Load() != original {
+		t.Fatalf("canceled checks changed the reference status: %+v", info)
+	}
+}
+
 func referenceFixture(t *testing.T, dir string, date time.Time, corruptHash bool) ([]byte, []byte) {
 	t.Helper()
 	var metadata struct {

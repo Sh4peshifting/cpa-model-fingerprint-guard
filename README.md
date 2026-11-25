@@ -56,7 +56,9 @@
 
 发布版启动时先加载经过校验的本地缓存或随包参考库，再在后台通过 HTTPS 检查 lm-detector 的公开数据源。仅下载新版公开模型清单和检测器分片。启用前核对数据格式、文件大小、SHA-256 和 Go SDK 加载结果。网络异常、格式不兼容或缓存在写入时失败都会保留当前版本。每轮检测只读取启动时选用的参考库，切换版本后重新计数连续不一致轮数。
 
-默认启动后检查一次，随后每 24 小时检查。可在宿主插件配置中设置 `reference-refresh-interval`，范围为 `1m` 到 `720h`。设置 `reference-auto-update: false` 可使用发布版内嵌数据。指定 `reference-dir` 时始终使用该本地目录。更改这些宿主配置后请重启 CLIProxyAPI。当前构建时间和最近更新状态可在管理页查看。缓存位于 `state-dir/reference-cache.json`。
+在 CPA 的「插件管理」打开模型指纹守卫的配置弹窗，可保存 `native-diagnostics`、`reference-auto-update` 和 `reference-refresh-interval`。保存后由宿主热应用，插件专页的「宿主生效配置」会显示实际值。格式或时长无效时，运行中的插件保留上一次生效值，并在专页提示。`state-dir` 和 `reference-dir` 的变更需要重启宿主。
+
+参考库默认启动后检查一次，随后每 24 小时检查。`reference-refresh-interval` 支持 `1m` 到 `720h`。启用自动更新或修改更新间隔后会立即检查一次。暂停更新会保留当前已加载的参考库。关闭自动更新后启动插件时使用发布版内嵌数据。指定 `reference-dir` 时使用该本地目录，并暂停自动下载。当前构建时间和最近更新状态可在插件专页查看。缓存位于 `state-dir/reference-cache.json`。
 
 ## 发布与官方插件源
 
