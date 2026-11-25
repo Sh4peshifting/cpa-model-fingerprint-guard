@@ -262,7 +262,7 @@ function render() {
     ['检测中', auths.filter(a => a.running).length, 'probe'],
     ['待检测', auths.filter(a => a.pending && !a.running).length, 'history'],
     ['宿主冷却', auths.filter(a => a.cooling && !a.disabled).length, 'probe'],
-    ['待人工处理', auths.filter(a => a.held && !a.disabled && !a.pending && !a.next_recheck).length, 'alert'],
+    ['待人工处理', auths.filter(a => a.held && !a.disabled && !a.pending && !a.next_recheck && !a.next_probe).length, 'alert'],
   ];
   byId('metrics').replaceChildren(...metrics.map(([label, value, glyph]) => {
     const card = element('div', null, { class: 'metric' });
@@ -361,13 +361,15 @@ function credentialParts(a) {
   else if (a.pending) status.append(badge(a.pending === 'gateway_recheck' ? '待恢复复检' : '待检测', 'pending'));
   else if (a.next_recheck && !a.disabled) status.append(badge('待复检', 'pending'));
   status.append(element('small', (a.policy.enabled ? '检测开启' : '检测关闭') +
-    (a.held && !a.pending && !a.next_recheck && !a.running ? ' · 待人工' : !a.probeable ? ' · 诊断不可用' : '')));
+    (a.held && !a.pending && !a.next_recheck && !a.next_probe && !a.running ? ' · 待人工' : !a.probeable ? ' · 诊断不可用' : '')));
   const result = element('div');
   result.append(resultBadge(a.last_result?.status));
   if (a.trigger?.at) result.append(element('small', translate(a.trigger.reason) + ' · ' + localTime(a.trigger.at)));
   if (a.abnormal?.confirmed_at) result.append(element('small', '确认 ' + localTime(a.abnormal.confirmed_at)));
   if (!a.running) {
-    if (a.next_probe && a.pending !== 'recheck') result.append(element('small', '下次检测 ' + localTime(a.next_probe)));
+    if (a.next_probe && a.pending !== 'recheck') {
+      result.append(element('small', (a.pending ? '下次检测 ' : '下次恢复复检 ') + localTime(a.next_probe)));
+    }
     else if (a.next_recheck) result.append(element('small', '下次复检 ' + localTime(a.next_recheck)));
   }
   const expected = a.last_expected || a.policy.expected || view.config.expected_models?.[a.policy.model] || a.policy.model;
@@ -377,6 +379,9 @@ function credentialParts(a) {
   actions.append(
     actionButton('设置', 'settings', 'settings', () => editAuth(a)),
     actionButton('检测', 'check', 'probe', () => action('check', [a.id]), a.disabled || !a.policy.enabled || !a.probeable || a.running),
+  );
+  if (a.pending && !a.running) actions.append(actionButton('取消检测', 'cancel', 'close', () => action('cancel', [a.id])));
+  actions.append(
     a.isolated
       ? actionButton('解除隔离', 'release', 'unlock', () => action('release', [a.id], true))
       : actionButton('隔离', 'isolate', 'lock', () => action('isolate', [a.id], true), a.disabled),
@@ -581,6 +586,7 @@ function confirmAction(title, detail) {
 }
 const actionLabels = {
   check: ['发起检测', '检测任务已受理'],
+  cancel: ['取消检测', '已取消本次检测'],
   isolate: ['隔离认证', '已隔离认证'],
   release: ['解除隔离', '已解除插件隔离'],
 };

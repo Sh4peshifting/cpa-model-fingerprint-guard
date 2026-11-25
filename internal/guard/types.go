@@ -97,21 +97,24 @@ type Record struct {
 }
 
 type AuthState struct {
-	LastBusiness    time.Time `json:"last_business,omitzero"`
-	LastCheck       time.Time `json:"last_check,omitzero"`
-	Isolated        bool      `json:"isolated"`
-	Held            bool      `json:"held"`
-	Trigger         Trigger   `json:"trigger,omitzero"`
-	Due             time.Time `json:"due,omitzero"`
-	ProbeCooldown   time.Time `json:"probe_cooldown_until,omitzero"`
-	Pending         string    `json:"pending,omitempty"`
-	Retries         int       `json:"retries"`
-	GatewayFailures int       `json:"gateway_failures,omitempty"`
-	Consecutive     int       `json:"consecutive"`
-	LastModel       string    `json:"last_model,omitempty"`
-	LastExpected    string    `json:"last_expected,omitempty"`
-	LastResult      Result    `json:"last_result,omitzero"`
-	Abnormal        *Abnormal `json:"abnormal,omitempty"`
-	Version         string    `json:"version,omitempty"`
-	WatchUntil      time.Time `json:"watch_until,omitzero"`
+	LastBusiness     time.Time `json:"last_business,omitzero"`
+	LastCheck        time.Time `json:"last_check,omitzero"`
+	Isolated         bool      `json:"isolated"`
+	Held             bool      `json:"held"`
+	Trigger          Trigger   `json:"trigger,omitzero"`
+	Due              time.Time `json:"due,omitzero"`
+	ProbeCooldown    time.Time `json:"probe_cooldown_until,omitzero"`
+	IdleSkippedAt    time.Time `json:"idle_skipped_at,omitzero"`
+	RecheckSkippedAt time.Time `json:"recheck_skipped_at,omitzero"`
+	GatewaySkippedAt time.Time `json:"gateway_skipped_at,omitzero"`
+	Pending          string    `json:"pending,omitempty"`
+	Retries          int       `json:"retries"`
+	GatewayFailures  int       `json:"gateway_failures,omitempty"`
+	Consecutive      int       `json:"consecutive"`
+	LastModel        string    `json:"last_model,omitempty"`
+	LastExpected     string    `json:"last_expected,omitempty"`
+	LastResult       Result    `json:"last_result,omitzero"`
+	Abnormal         *Abnormal `json:"abnormal,omitempty"`
+	Version          string    `json:"version,omitempty"`
+	WatchUntil       time.Time `json:"watch_until,omitzero"`
 }
