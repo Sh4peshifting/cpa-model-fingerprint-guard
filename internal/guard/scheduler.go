@@ -26,11 +26,8 @@ func (g *Guard) schedule(now time.Time, scan bool) {
 			continue
 		}
 		triggerDisabled := s.Isolated && s.Trigger.Reason != "manual" && !p.Trigger
-		if s.Pending == "" && a.Probeable {
-			if due := s.gatewayResumeAt(cfg); !due.IsZero() && !now.Before(due) {
-				s.Pending, s.Due, s.GatewaySkippedAt = gatewayRecheck, due, time.Time{}
-				g.dirty = true
-			}
+		if s.CancelledRecheck != "" && s.Pending != "manual" {
+			continue
 		}
 		if scan && (s.Pending == "" || triggerDisabled && s.Pending == "confirm") {
 			if due := mismatchRecheckDue(a, s, p, cfg); !due.IsZero() && !now.Before(due) {
@@ -106,13 +103,6 @@ func (s *AuthState) probeDue(a Auth) time.Time {
 	return due
 }
 
-func (s *AuthState) gatewayResumeAt(cfg Config) time.Time {
-	if s.GatewaySkippedAt.IsZero() || !s.Isolated || !s.Trigger.isBusiness() {
-		return time.Time{}
-	}
-	return s.GatewaySkippedAt.Add(seconds(cfg.GatewayRecheckSeconds))
-}
-
 func (g *Guard) idle(now time.Time, id string, s *AuthState, cfg Config) bool {
 	last := s.LastCheck
 	if s.IdleSkippedAt.After(last) {
@@ -125,7 +115,7 @@ func (g *Guard) idle(now time.Time, id string, s *AuthState, cfg Config) bool {
 
 func mismatchRecheckDue(a Auth, s *AuthState, p Policy, cfg Config) time.Time {
 	fault := s.Abnormal
-	if !p.Enabled || a.Disabled || !a.Probeable || !s.Isolated || fault == nil ||
+	if !p.Enabled || a.Disabled || !a.Probeable || !s.Isolated || fault == nil || s.CancelledRecheck != "" ||
 		fault.PluginDisabled || fault.Confirmed.IsZero() || s.Trigger.At.After(fault.Confirmed) ||
 		fault.RequestModel == "" || fault.Expected == "" {
 		return time.Time{}
@@ -134,18 +124,21 @@ func mismatchRecheckDue(a Auth, s *AuthState, p Policy, cfg Config) time.Time {
 	if s.LastCheck.After(last) {
 		last = s.LastCheck
 	}
-	if s.RecheckSkippedAt.After(last) {
-		last = s.RecheckSkippedAt
-	}
 	return last.Add(seconds(cfg.MismatchRecheckSeconds))
 }
 
 func (g *Guard) launch(a Auth, s *AuthState, cfg Config) {
 	p := cfg.Policy(a.ID, a.Provider)
 	model, expect := cfg.Target(p, s.Trigger.Model)
-	switch s.Pending {
+	target := s.Pending
+	if target == "manual" && s.CancelledRecheck != "" {
+		target = s.CancelledRecheck
+	}
+	switch target {
 	case mismatchRecheck:
-		model, expect = s.Abnormal.RequestModel, s.Abnormal.Expected
+		if s.Abnormal != nil {
+			model, expect = s.Abnormal.RequestModel, s.Abnormal.Expected
+		}
 	case gatewayRecheck:
 		model = s.Trigger.Model
 		expect = cfg.ExpectedModels[model]
@@ -250,8 +243,11 @@ func (g *Guard) finish(ctx context.Context, start time.Time, j *job, current Aut
 
 func (g *Guard) applyResult(now time.Time, j *job, s *AuthState, trigger Trigger, r Result) string {
 	cfg := g.state.Config
-	if j.reason == mismatchRecheck && r.Status != Match {
+	if (j.reason == mismatchRecheck || s.CancelledRecheck != "") && r.Status != Match {
 		s.Held = true
+		if s.CancelledRecheck != "" && r.CooldownUntil.After(now) {
+			s.ProbeCooldown = r.CooldownUntil
+		}
 		return "recheck_kept_isolated"
 	}
 
@@ -272,7 +268,7 @@ func (g *Guard) applyResult(now time.Time, j *job, s *AuthState, trigger Trigger
 
 	switch r.Status {
 	case Match:
-		requiresKnownModel := business && j.reason != mismatchRecheck
+		requiresKnownModel := business && j.reason != mismatchRecheck && s.CancelledRecheck != mismatchRecheck
 		if (requiresKnownModel || trigger.Model != "") && j.Model != trigger.Model {
 			s.Held = true
 			if j.reason == gatewayRecheck {
@@ -377,7 +373,7 @@ func (g *Guard) recordOverload(now time.Time, provider string, overload bool) {
 func (g *Guard) release(s *AuthState) {
 	s.Isolated, s.Held, s.Retries, s.Consecutive = false, false, 0, 0
 	s.Trigger, s.Pending, s.Due, s.GatewayFailures, s.ProbeCooldown = Trigger{}, "", time.Time{}, 0, time.Time{}
-	s.RecheckSkippedAt, s.GatewaySkippedAt = time.Time{}, time.Time{}
+	s.CancelledRecheck = ""
 }
 
 func (g *Guard) trimHistory() {

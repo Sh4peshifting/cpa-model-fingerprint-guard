@@ -105,10 +105,15 @@ func (c Config) Policy(id, provider string) Policy {
 	return p
 }
 
+const ModelGPT61Sol = "gpt-6.1-sol"
+
 func (c Config) Target(p Policy, failedModel string) (request, expected string) {
 	if c.PreferFailed && failedModel != "" {
 		if mapped := c.ExpectedModels[failedModel]; mapped != "" {
 			return failedModel, mapped
+		}
+		if failedModel == ModelGPT61Sol && p.Model != failedModel {
+			return failedModel, failedModel
 		}
 	}
 	expected = p.Expect

@@ -33,11 +33,11 @@ initializeTheme();
 
 const translations = {
   normal: '正常', isolated: '隔离', cooling: '宿主冷却', disabled: '已停用',
-  match: '匹配', mismatch: '不一致', inconclusive: '证据不足', transient: '暂时失败',
+  match: '一致', mismatch: '不一致', inconclusive: '证据不足', transient: '失败',
   unsupported: '不支持', cancelled: '已取消', error: '上游异常', manual: '手动操作',
   idle: '空闲检测', confirm: '复核', http_status: 'HTTP 状态', error_code: '错误代码',
   recheck: '隔离后自动复检', recheck_kept_isolated: '复检未通过，保持隔离',
-  error_text: '错误文本', matched: '匹配，解除插件隔离', recorded: '已记录',
+  error_text: '错误文本', matched: '一致，解除插件隔离', recorded: '已记录',
   confirm_again: '等待复核', different_model: '测试模型与异常模型不同，等待人工',
   confirmed_isolation: '已确认不一致，保持隔离',
   held_by_policy: '保持隔离', host_mutation_unavailable: '保持隔离', host_write_failed: '保持隔离',
@@ -49,6 +49,7 @@ const translations = {
 const translate = value => translations[value] || value || '—';
 const localTime = value => value ? new Date(value).toLocaleString() : '—';
 const numberText = value => value == null ? '—' : value.toFixed(3);
+const identifiedModel = result => result?.detected_class || result?.detected || '—';
 let key = '';
 let view = null;
 let settingsRevision = 0;
@@ -341,7 +342,7 @@ function filteredAuths() {
   const query = byId('auth-search').value.trim().toLowerCase();
   const filter = byId('auth-filter').value;
   return view.auths.filter(a => (!filter || (filter === 'pending' ? a.pending && !a.running : stateName(a) === filter)) &&
-    [a.name, a.id, a.provider, a.policy.model, a.policy.expected, a.last_result?.detected].join(' ').toLowerCase().includes(query));
+    [a.name, a.id, a.provider, a.policy.model, a.policy.expected, identifiedModel(a.last_result)].join(' ').toLowerCase().includes(query));
 }
 function setSelection(auths, value) {
   for (const a of auths) {
@@ -363,7 +364,7 @@ function credentialParts(a) {
   else if (a.pending) badges.append(badge(a.pending === 'gateway_recheck' ? '待恢复复检' : '待检测', 'pending'));
   else if (a.next_recheck && !a.disabled) badges.append(badge('待复检', 'pending'));
   status.append(badges, element('small', (a.policy.enabled ? '检测开启' : '检测关闭') +
-    (a.held && !a.pending && !a.next_recheck && !a.next_probe && !a.running ? ' · 待人工' : !a.probeable ? ' · 诊断不可用' : '')));
+    (a.held && !a.pending && !a.next_recheck && !a.next_probe && !a.running ? ' · 待人工处理' : !a.probeable ? ' · 诊断不可用' : '')));
   const result = element('div', null, { class: 'auth-result' });
   result.append(resultBadge(a.last_result?.status));
   if (a.trigger?.at || a.abnormal?.confirmed_at || a.next_probe || a.next_recheck) {
@@ -374,13 +375,19 @@ function credentialParts(a) {
   }
   const expected = a.last_expected || a.policy.expected || view.config.expected_models?.[a.policy.model] || a.policy.model;
   const models = element('div');
-  models.append(element('span', expected || '—'), element('small', a.last_result?.detected || '—'));
+  models.append(element('span', expected || '—'), element('small', identifiedModel(a.last_result)));
   const actions = element('div', null, { class: 'row-actions' });
   actions.append(
     actionButton('设置', 'settings', 'settings', () => editAuth(a)),
     actionButton('检测', 'check', 'probe', () => action('check', [a.id]), a.disabled || !a.policy.enabled || !a.probeable || a.running),
   );
-  if (a.pending && !a.running) actions.append(actionButton('取消检测', 'cancel', 'close', () => action('cancel', [a.id])));
+  if ((a.pending || a.next_recheck) && !a.running) {
+    const cancel = actionButton('取消检测', 'cancel', 'close', () => action('cancel', [a.id]));
+    if (a.pending === 'recheck' || a.pending === 'gateway_recheck' || !a.pending) {
+      cancel.title = '取消自动复检，保持隔离并等待人工处理';
+    }
+    actions.append(cancel);
+  }
   actions.append(
     a.isolated
       ? actionButton('解除隔离', 'release', 'unlock', () => action('release', [a.id], true))
@@ -512,7 +519,7 @@ function renderAuthDetails() {
   }
   if (auth.abnormal?.confirmed_at) rows.push(['确认时间', localTime(auth.abnormal.confirmed_at)]);
   if (!auth.running && auth.next_probe && auth.pending !== 'recheck') {
-    rows.push([auth.pending ? '下次检测' : '下次恢复复检', localTime(auth.next_probe)]);
+    rows.push(['下次检测', localTime(auth.next_probe)]);
   } else if (!auth.running && auth.next_recheck) {
     rows.push(['下次复检', localTime(auth.next_recheck)]);
   }
@@ -553,12 +560,12 @@ function renderHistory() {
   const query = byId('history-search').value.trim().toLowerCase();
   const filter = byId('history-filter').value;
   const history = view.history.filter(row => (!filter || row.result.status === filter) &&
-    [row.name, row.auth_id, row.model, row.expected, row.result.detected, translate(row.action)]
+    [row.name, row.auth_id, row.model, row.expected, identifiedModel(row.result), translate(row.action)]
       .join(' ').toLowerCase().includes(query));
   const rows = history.map(row => {
     const tr = element('tr');
     for (const value of [localTime(row.at), row.name, translate(row.trigger.reason), row.model + ' / ' + row.expected,
-      row.result.detected || '—', resultBadge(row.result.status), numberText(row.result.probability),
+      identifiedModel(row.result), resultBadge(row.result.status), numberText(row.result.probability),
       (row.duration_ms / 1000).toFixed(2) + ' 秒', translate(row.action)]) {
       const cell = element('td');
       cell.append(value);
@@ -645,7 +652,7 @@ function confirmAction(title, detail) {
 }
 const actionLabels = {
   check: ['发起检测', '检测任务已受理'],
-  cancel: ['取消检测', '已取消本次检测'],
+  cancel: ['取消检测', '已取消检测'],
   isolate: ['隔离认证', '已隔离认证'],
   release: ['解除隔离', '已解除插件隔离'],
 };

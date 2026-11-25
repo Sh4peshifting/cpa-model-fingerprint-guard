@@ -32,6 +32,7 @@ type Result struct {
 	ReferenceBuild string    `json:"reference_build,omitempty"`
 	Status         Status    `json:"status"`
 	Detected       string    `json:"detected,omitempty"`
+	DetectedClass  string    `json:"detected_class,omitempty"`
 	Score          *float64  `json:"score,omitempty"`
 	Probability    *float64  `json:"probability,omitempty"`
 	Reason         string    `json:"reason,omitempty"`
@@ -105,8 +106,7 @@ type AuthState struct {
 	Due              time.Time `json:"due,omitzero"`
 	ProbeCooldown    time.Time `json:"probe_cooldown_until,omitzero"`
 	IdleSkippedAt    time.Time `json:"idle_skipped_at,omitzero"`
-	RecheckSkippedAt time.Time `json:"recheck_skipped_at,omitzero"`
-	GatewaySkippedAt time.Time `json:"gateway_skipped_at,omitzero"`
+	CancelledRecheck string    `json:"cancelled_recheck,omitempty"`
 	Pending          string    `json:"pending,omitempty"`
 	Retries          int       `json:"retries"`
 	GatewayFailures  int       `json:"gateway_failures,omitempty"`
@@ -117,4 +117,8 @@ type AuthState struct {
 	Abnormal         *Abnormal `json:"abnormal,omitempty"`
 	Version          string    `json:"version,omitempty"`
 	WatchUntil       time.Time `json:"watch_until,omitzero"`
+
+	// Read older cancellations on upgrade. The loader clears these after migrating.
+	LegacyRecheckSkippedAt time.Time `json:"recheck_skipped_at,omitzero"`
+	LegacyGatewaySkippedAt time.Time `json:"gateway_skipped_at,omitzero"`
 }

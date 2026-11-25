@@ -2,6 +2,22 @@ package guard
 
 import "testing"
 
+func TestSolBusinessProbeKeepsRequestModelAndOverrides(t *testing.T) {
+	cfg := DefaultConfig()
+	p := Policy{Model: "configured", Expect: "configured-reference"}
+	if model, expected := cfg.Target(p, ModelGPT61Sol); model != ModelGPT61Sol || expected != ModelGPT61Sol {
+		t.Fatalf("business probe targets %q / %q", model, expected)
+	}
+	cfg.ExpectedModels[ModelGPT61Sol] = "explicit-reference"
+	if model, expected := cfg.Target(p, ModelGPT61Sol); model != ModelGPT61Sol || expected != "explicit-reference" {
+		t.Fatalf("explicit mapping targets %q / %q", model, expected)
+	}
+	cfg.PreferFailed = false
+	if model, expected := cfg.Target(p, ModelGPT61Sol); model != p.Model || expected != p.Expect {
+		t.Fatalf("disabled preference targets %q / %q", model, expected)
+	}
+}
+
 func TestPolicyPrecedenceAndTarget(t *testing.T) {
 	cfg := DefaultConfig()
 	yes, no := true, false
