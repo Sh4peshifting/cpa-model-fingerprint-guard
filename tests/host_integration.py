@@ -2,6 +2,8 @@
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from http.client import HTTPConnection
+from http.cookies import SimpleCookie
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
@@ -126,6 +128,47 @@ def run_host(binary, directory, flags=()):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(5)
+
+
+@contextmanager
+def run_access_proxy(origin_port):
+    """Require a browser session cookie before forwarding the login request."""
+    class AccessProxy(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == API + "/state":
+                cookie = SimpleCookie(self.headers.get("Cookie", "")).get("CF_Authorization")
+                if not cookie or cookie.value != "fixture-access-session":
+                    self.send_response(302)
+                    self.send_header("Location", "/access/login")
+                    self.end_headers()
+                    return
+            connection = HTTPConnection("127.0.0.1", origin_port, timeout=8)
+            try:
+                headers = {"Authorization": self.headers["Authorization"]} if "Authorization" in self.headers else {}
+                connection.request("GET", self.path, headers=headers)
+                response = connection.getresponse()
+                body = response.read()
+                self.send_response(response.status)
+                for name in ("Content-Type", "Content-Security-Policy", "Cache-Control", "Referrer-Policy", "X-Content-Type-Options"):
+                    if (value := response.getheader(name)) is not None:
+                        self.send_header(name, value)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            finally:
+                connection.close()
+
+        def log_message(self, _format, *_args):
+            pass
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), AccessProxy) as proxy:
+        thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield f"http://127.0.0.1:{proxy.server_port}"
+        finally:
+            proxy.shutdown()
+            thread.join(timeout=5)
 
 
 def get_state(base):
@@ -255,7 +298,8 @@ plugins:
         assert not any(auth == "Bearer fixture-upstream-a" and probe for auth, _, probe in Upstream.calls[call_count:])
         if browser_test:
             script = Path(__file__).with_name("browser.mjs")
-            subprocess.run(["node", str(script), base], check=True, timeout=40)
+            with run_access_proxy(host_port) as access_base:
+                subprocess.run(["node", str(script), base, access_base], check=True, timeout=40)
     with run_host(host, tmp):
         restored = wait_for(lambda: next((s for s in [get_state(base)] if s and len(s["auths"]) == 2), None))
         assert any(x["id"] == a and x["isolated"] for x in restored["auths"])

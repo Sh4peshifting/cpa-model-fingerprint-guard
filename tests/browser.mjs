@@ -5,8 +5,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-const pluginURL = process.argv[2] + '/v0/resource/plugins/model-fingerprint-guard/index.html';
+const pluginPath = '/v0/resource/plugins/model-fingerprint-guard/index.html';
+const pluginURL = process.argv[2] + pluginPath;
 const fixtureKey = 'fixture-management-only';
+const manualLogin = `(() => {
+  document.getElementById('key').value = ${JSON.stringify(fixtureKey)};
+  document.getElementById('login').requestSubmit();
+})()`;
+
+// Mirror the v1.29.1 panel's remembered Zustand record using fixture credentials.
+function panelRecord(host, state) {
+  const mask = Buffer.from('cli-proxy-api-webui::secure-storage|' + host);
+  const bytes = Buffer.from(JSON.stringify({ state, version: 0 }));
+  return 'enc::v2::' + bytes.map((byte, i) => byte ^ mask[i % mask.length]).toString('base64');
+}
 const profile = await mkdtemp(join(tmpdir(), 'mfg-browser-'));
 const chrome = spawn(process.env.MFG_CHROMIUM || 'chromium', [
   '--headless', '--no-sandbox', '--no-first-run', '--disable-background-networking',
@@ -76,11 +88,7 @@ try {
   await send('Emulation.setDeviceMetricsOverride', { width: 375, height: 760, deviceScaleFactor: 1, mobile: true });
   assert(await evaluate(centeredLogin));
   await send('Emulation.clearDeviceMetricsOverride');
-  await evaluate(`(() => {
-    const key = document.getElementById('key');
-    key.value = ${JSON.stringify(fixtureKey)};
-    document.getElementById('login').requestSubmit();
-  })()`);
+  await evaluate(manualLogin);
   await until(() => evaluate('!document.getElementById("workspace").hidden'));
   assert.equal(await evaluate('document.getElementById("key").value'), '');
   await emulateTheme('dark');
@@ -194,12 +202,6 @@ try {
   await evaluate('document.documentElement.removeAttribute("data-theme")');
   await until(async () => await frameTheme() === 'light');
   const { host, origin } = new URL(pluginURL);
-  // Mirror the v1.29.1 panel's remembered Zustand record using fixture credentials.
-  function panelRecord(state) {
-    const mask = Buffer.from('cli-proxy-api-webui::secure-storage|' + host);
-    const bytes = Buffer.from(JSON.stringify({ state, version: 0 }));
-    return 'enc::v2::' + bytes.map((byte, i) => byte ^ mask[i % mask.length]).toString('base64');
-  }
   const remembered = { apiBase: origin, managementKey: fixtureKey, rememberPassword: true };
   async function openPluginWithRecord(raw, loggedIn = true) {
     await evaluate(`(() => {
@@ -224,15 +226,15 @@ try {
   const workspaceOpen = "!doc.getElementById('workspace').hidden && doc.getElementById('login-page').hidden";
   for (const [record, loggedIn] of [
     ['enc::v2::invalid!', true],
-    [panelRecord({ ...remembered, apiBase: origin + '/other-instance' }), true],
-    [panelRecord({ ...remembered, apiBase: 'https://other.example' }), true],
-    [panelRecord({ ...remembered, rememberPassword: false }), true],
-    [panelRecord(remembered), false],
+    [panelRecord(host, { ...remembered, apiBase: origin + '/other-instance' }), true],
+    [panelRecord(host, { ...remembered, apiBase: 'https://other.example' }), true],
+    [panelRecord(host, { ...remembered, rememberPassword: false }), true],
+    [panelRecord(host, remembered), false],
   ]) {
     await openPluginWithRecord(record, loggedIn);
     assert(await pluginFrame(manualForm + " && doc.getElementById('login-status').hidden"));
   }
-  const validRecord = panelRecord(remembered);
+  const validRecord = panelRecord(host, remembered);
   await openPluginWithRecord(validRecord);
   await until(() => pluginFrame(workspaceOpen));
   assert(await pluginFrame("doc.getElementById('key').value === ''"));
@@ -240,7 +242,7 @@ try {
   assert(await pluginFrame(manualForm));
   assert(await evaluate(`localStorage.length === 2 && localStorage.getItem('isLoggedIn') === 'true'
     && localStorage.getItem('cli-proxy-auth') === ${JSON.stringify(validRecord)} && sessionStorage.length === 0`));
-  await openPluginWithRecord(panelRecord({ ...remembered, managementKey: 'fixture-expired' }));
+  await openPluginWithRecord(panelRecord(host, { ...remembered, managementKey: 'fixture-expired' }));
   await until(() => pluginFrame(manualForm + " && doc.getElementById('login-status').textContent.includes('自动登录未成功')"));
   assert(await pluginFrame("doc.getElementById('key').value === ''"));
   await pluginFrame(`(() => {
@@ -248,6 +250,44 @@ try {
     doc.getElementById('login').requestSubmit();
   })()`);
   await until(() => pluginFrame(workspaceOpen));
+
+  if (process.argv[3]) {
+    const accessOrigin = new URL(process.argv[3]);
+    const protectedURL = new URL(pluginPath, accessOrigin).href;
+    await send('Page.navigate', { url: protectedURL });
+    await until(() => evaluate(`location.href === ${JSON.stringify(protectedURL)} && document.readyState === 'complete'`));
+    await evaluate(manualLogin);
+    await until(() => evaluate('!document.getElementById("login-status").hidden'));
+    assert(await evaluate('document.getElementById("workspace").hidden'));
+
+    const cookie = await send('Network.setCookie', {
+      url: protectedURL, name: 'CF_Authorization', value: 'fixture-access-session',
+      path: '/', httpOnly: true, sameSite: 'Lax',
+    });
+    assert(cookie.success);
+    assert(await evaluate('!document.cookie.includes("CF_Authorization")'));
+    await evaluate(manualLogin);
+    await until(() => evaluate('!document.getElementById("workspace").hidden || document.querySelector("#login-status.error") !== null'));
+    assert(await evaluate('!document.getElementById("workspace").hidden'), 'Manual login with an Access session cookie');
+
+    const record = panelRecord(accessOrigin.host, { ...remembered, apiBase: accessOrigin.origin });
+    await evaluate(`(() => {
+      localStorage.setItem('cli-proxy-auth', ${JSON.stringify(record)});
+      localStorage.setItem('isLoggedIn', 'true');
+    })()`);
+    const parentURL = new URL('/healthz', accessOrigin).href;
+    await send('Page.navigate', { url: parentURL });
+    await until(() => evaluate(`location.href === ${JSON.stringify(parentURL)} && document.readyState === 'complete'`));
+    await evaluate(`(() => {
+      const frame = document.createElement('iframe');
+      frame.id = 'theme-fixture';
+      frame.src = ${JSON.stringify(protectedURL)};
+      frame.hidden = true;
+      document.body.append(frame);
+    })()`);
+    await until(() => pluginFrame("doc?.getElementById('workspace') && (" + workspaceOpen + ")"));
+    console.log('Chromium: manual and automatic login through a cookie-protected management endpoint passed');
+  }
   socket.close();
   console.log('Chromium: centered login, remembered panel session, manual fallback, themes, keyboard tabs, credential layouts, settings, history and logout passed');
 } finally {
