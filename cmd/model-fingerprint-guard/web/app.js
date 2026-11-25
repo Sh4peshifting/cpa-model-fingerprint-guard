@@ -59,8 +59,8 @@ let authLayout = 'cards';
 let refreshRequest = null;
 let busy = false;
 const maxBatchSize = 250;
-let session = 0;
 let lastRender = '';
+let noticeTimer;
 
 function element(tag, text, attributes = {}) {
   const node = document.createElement(tag);
@@ -70,10 +70,16 @@ function element(tag, text, attributes = {}) {
 }
 function message(text, bad = false) {
   const node = byId('notice');
+  const content = byId('notice-text');
+  if (text && !node.hidden && content.textContent === text) return;
+  clearTimeout(noticeTimer);
   node.hidden = !text;
-  node.classList.toggle('error', bad);
-  if (node.textContent !== text) node.textContent = text;
+  node.dataset.tone = bad ? 'error' : text === '正在处理…' ? 'info' : 'success';
+  byId('notice-icon').replaceChildren(icon({ error: 'alert', info: 'info', success: 'check' }[node.dataset.tone]));
+  content.textContent = text;
+  if (text && node.dataset.tone !== 'info') noticeTimer = setTimeout(() => message(''), 5000);
 }
+byId('dismiss-notice').onclick = () => message('');
 async function api(path, method = 'GET', body, timeout = 15000) {
   const headers = { Authorization: 'Bearer ' + key };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -91,9 +97,7 @@ async function api(path, method = 'GET', body, timeout = 15000) {
 function refresh(timeout) {
   if (!key) return Promise.resolve();
   if (refreshRequest) return refreshRequest;
-  const requestedSession = session;
   const request = api('/state', 'GET', undefined, timeout).then(next => {
-    if (requestedSession !== session) return;
     const serialized = JSON.stringify(next);
     view = next;
     if (serialized !== lastRender) {
@@ -108,14 +112,13 @@ function refresh(timeout) {
   refreshRequest = request;
   return request;
 }
-async function refreshLatest(requestedSession) {
+async function refreshLatest() {
   await refreshRequest?.catch(() => {});
-  if (requestedSession === session) await refresh();
+  await refresh();
 }
 function setConnected(connected) {
   byId('login-page').hidden = connected;
   byId('page-header').hidden = !connected;
-  byId('session-actions').hidden = !connected;
   byId('workspace').hidden = !connected;
 }
 function loginStatus(text, bad = false) {
@@ -184,36 +187,9 @@ byId('login').addEventListener('submit', event => {
   input.value = '';
   void connect(managementKey);
 });
-byId('logout').onclick = () => {
-  session++;
-  refreshRequest = null;
-  busy = false;
-  key = '';
-  view = null;
-  settingsBaseline = null;
-  selected.clear();
-  lastRender = '';
-  setConnected(false);
-  editing = null;
-  byId('auth-dialog').close();
-  closeConfirmation(false);
-  for (const id of ['auth-cards', 'auth-rows', 'history-rows', 'recent', 'settings-fields',
-    'metrics', 'auth-fields', 'auth-name', 'confirm-title', 'confirm-detail', 'health', 'reference-models']) {
-    byId(id).replaceChildren();
-  }
-  formError('auth-error');
-  formError('settings-error');
-  for (const id of ['auth-search', 'auth-filter', 'history-search', 'history-filter']) byId(id).value = '';
-  openTab(byId('tab-overview'));
-  syncWriteControls();
-  message('');
-  loginStatus('');
-  byId('key').focus();
-};
 window.setInterval(() => {
   if (!view || busy || document.hidden) return;
-  const requestedSession = session;
-  refresh().catch(error => { if (requestedSession === session) message(error.message, true); });
+  refresh().catch(error => message(error.message, true));
 }, 3000);
 const tabs = [...document.querySelectorAll('[role="tab"]')];
 function openTab(tab, focus = false) {
@@ -242,19 +218,6 @@ for (const [index, tab] of tabs.entries()) {
   };
 }
 byId('open-history').onclick = () => openTab(byId('tab-history'), true);
-byId('refresh').onclick = async () => {
-  const button = byId('refresh');
-  const requestedSession = session;
-  button.disabled = true;
-  try {
-    await refresh();
-    if (requestedSession === session) message('状态已刷新');
-  } catch (error) {
-    if (requestedSession === session) message(error.message, true);
-  } finally {
-    button.disabled = false;
-  }
-};
 function icon(name) {
   const namespace = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(namespace, 'svg');
@@ -299,7 +262,7 @@ function render() {
     ['检测中', auths.filter(a => a.running).length, 'probe'],
     ['待检测', auths.filter(a => a.pending && !a.running).length, 'history'],
     ['宿主冷却', auths.filter(a => a.cooling && !a.disabled).length, 'probe'],
-    ['待人工处理', auths.filter(a => a.held && !a.disabled && !a.next_recheck).length, 'alert'],
+    ['待人工处理', auths.filter(a => a.held && !a.disabled && !a.pending && !a.next_recheck).length, 'alert'],
   ];
   byId('metrics').replaceChildren(...metrics.map(([label, value, glyph]) => {
     const card = element('div', null, { class: 'metric' });
@@ -376,7 +339,7 @@ function actionButton(text, name, glyph, fn, disabled = false) {
 function filteredAuths() {
   const query = byId('auth-search').value.trim().toLowerCase();
   const filter = byId('auth-filter').value;
-  return view.auths.filter(a => (!filter || stateName(a) === filter) &&
+  return view.auths.filter(a => (!filter || (filter === 'pending' ? a.pending && !a.running : stateName(a) === filter)) &&
     [a.name, a.id, a.provider, a.policy.model, a.policy.expected, a.last_result?.detected].join(' ').toLowerCase().includes(query));
 }
 function setSelection(auths, value) {
@@ -393,14 +356,20 @@ function credentialParts(a) {
   identity.append(element('strong', a.name), element('small', a.provider));
   const status = element('div');
   const state = stateName(a);
-  const heldLabel = a.next_recheck ? ' · 待复检' : ' · 待人工';
-  status.append(badge(translate(state), state),
-    element('small', (a.policy.enabled ? '检测开启' : '检测关闭') + (a.running ? ' · 检测中' : a.held ? heldLabel : !a.probeable ? ' · 诊断不可用' : '')));
+  status.append(badge(translate(state), state));
+  if (a.running) status.append(badge('检测中', 'pending'));
+  else if (a.pending) status.append(badge(a.pending === 'gateway_recheck' ? '待恢复复检' : '待检测', 'pending'));
+  else if (a.next_recheck && !a.disabled) status.append(badge('待复检', 'pending'));
+  status.append(element('small', (a.policy.enabled ? '检测开启' : '检测关闭') +
+    (a.held && !a.pending && !a.next_recheck && !a.running ? ' · 待人工' : !a.probeable ? ' · 诊断不可用' : '')));
   const result = element('div');
   result.append(resultBadge(a.last_result?.status));
   if (a.trigger?.at) result.append(element('small', translate(a.trigger.reason) + ' · ' + localTime(a.trigger.at)));
   if (a.abnormal?.confirmed_at) result.append(element('small', '确认 ' + localTime(a.abnormal.confirmed_at)));
-  if (a.next_recheck && !a.running) result.append(element('small', '下次复检 ' + localTime(a.next_recheck)));
+  if (!a.running) {
+    if (a.next_probe && a.pending !== 'recheck') result.append(element('small', '下次检测 ' + localTime(a.next_probe)));
+    else if (a.next_recheck) result.append(element('small', '下次复检 ' + localTime(a.next_recheck)));
+  }
   const expected = a.last_expected || a.policy.expected || view.config.expected_models?.[a.policy.model] || a.policy.model;
   const models = element('div');
   models.append(element('span', expected || '—'), element('small', a.last_result?.detected || '—'));
@@ -414,11 +383,32 @@ function credentialParts(a) {
   );
   return { checkbox, identity, status, models, result, actions };
 }
-function credential(a) {
+function detectionSummary(records = []) {
+  if (!records.length) return element('small', '暂无检测记录');
+  const summary = element('div', null, { class: 'detection-summary' });
+  const squares = element('div', null, { class: 'detection-squares', role: 'group', 'aria-label': '最近 16 次检测结果' });
+  const counts = { match: 0, mismatch: 0, failed: 0 };
+  const outcomes = records.map(record => {
+    const status = record.result.status;
+    const outcome = status === 'match' || status === 'mismatch' ? status : 'failed';
+    counts[outcome]++;
+    return outcome;
+  });
+  for (let i = Math.min(records.length, 16) - 1; i >= 0; i--) {
+    const label = localTime(records[i].at) + ' · ' + translate(records[i].result.status);
+    squares.append(element('span', null, { class: outcomes[i], title: label, 'aria-label': label, role: 'img' }));
+  }
+  const rate = new Intl.NumberFormat('zh-CN', { style: 'percent', maximumFractionDigits: 1 }).format(counts.match / records.length);
+  summary.append(squares, element('small',
+    '一致 ' + counts.match + ' / 不一致 ' + counts.mismatch + ' / 失败 ' + counts.failed + ' · 一致率 ' + rate,
+    { title: '按此认证的全部保留记录统计，证据不足、不支持和取消计入失败。' }));
+  return summary;
+}
+function credential(a, records) {
   const { checkbox, identity, status, models, result, actions } = credentialParts(a);
   const information = [
     ['最后业务', localTime(a.last_business)], ['最后检测', localTime(a.last_check)],
-    ['预期 / 识别模型', models], ['结果 / 隔离', result],
+    ['预期 / 识别模型', models], ['结果 / 隔离', result], ['检测记录', detectionSummary(records)],
   ];
   if (authLayout === 'table') {
     const row = element('tr', null, { 'data-auth': a.id });
@@ -461,8 +451,13 @@ function renderAuth() {
   byId('auth-cards').hidden = authLayout !== 'cards' || !auths.length;
   byId('auth-table').hidden = authLayout !== 'table' || !auths.length;
   const target = byId(authLayout === 'cards' ? 'auth-cards' : 'auth-rows');
+  const recordsByAuth = new Map();
+  for (const row of view.history) {
+    if (!recordsByAuth.has(row.auth_id)) recordsByAuth.set(row.auth_id, []);
+    recordsByAuth.get(row.auth_id).push(row);
+  }
   byId(authLayout === 'cards' ? 'auth-rows' : 'auth-cards').replaceChildren();
-  target.replaceChildren(...auths.map(credential));
+  target.replaceChildren(...auths.map(auth => credential(auth, recordsByAuth.get(auth.id))));
   if (activeCredential && active.dataset.control) {
     const item = target.querySelector('[data-auth="' + CSS.escape(activeCredential.dataset.auth) + '"]');
     const control = item?.querySelector('[data-control="' + active.dataset.control + '"]:not(:disabled)');
@@ -537,35 +532,29 @@ function formError(id, text = '') {
 }
 async function perform(write, { errorId, applied } = {}) {
   if (busy || !view) return;
-  const requestedSession = session;
   busy = true;
   syncWriteControls();
   if (errorId) formError(errorId);
   if (errorId !== 'auth-error') message('正在处理…');
   try {
     const result = await write();
-    if (requestedSession !== session) return;
     let refreshed = false;
     try {
-      await refreshLatest(requestedSession);
+      await refreshLatest();
       refreshed = true;
     } catch {
       // The write and subsequent state fetch have separate outcomes.
     }
-    if (requestedSession !== session) return;
     applied?.(refreshed);
-    message(result.text + (refreshed ? '' : '。状态刷新失败，请重试刷新。'), result.failed || !refreshed);
+    message(result.text + (refreshed ? '' : '。状态刷新失败，稍后会自动重试。'), result.failed || !refreshed);
   } catch (error) {
-    if (requestedSession !== session) return;
     if (errorId) {
       formError(errorId, error.message);
       message('');
     } else message(error.message, true);
   } finally {
-    if (requestedSession === session) {
-      busy = false;
-      syncWriteControls();
-    }
+    busy = false;
+    syncWriteControls();
   }
 }
 const confirmation = byId('confirm-dialog');
@@ -594,7 +583,6 @@ const actionLabels = {
   check: ['发起检测', '检测任务已受理'],
   isolate: ['隔离认证', '已隔离认证'],
   release: ['解除隔离', '已解除插件隔离'],
-  recover: ['恢复认证', '已恢复认证'],
 };
 async function action(name, ids, confirm = false) {
   if (busy || !view || !ids.length || ids.length > maxBatchSize) return;
@@ -657,9 +645,54 @@ const settingsGroups = {
     providers: ['提供商覆盖设置', 'json'],
   },
 };
+const settingHelp = {
+  enabled: '控制检测和复检任务。全局关闭后保留当前隔离状态。',
+  idle: '认证无活跃业务且达到空闲阈值时，安排例行检测。',
+  trigger: '业务错误达到触发条件时，隔离该认证并安排检测。',
+  model: '传给 CPA 的请求模型名，可填写该认证支持的模型别名。',
+  expected: '用于比较指纹的参考库模型 ID。',
+  history_limit: '所有认证共用的保留上限。认证管理按仍保留的记录统计。',
+  scan_seconds: '检查空闲认证和到期的不一致复检的周期。',
+  idle_seconds: '距离该认证最后一次业务活动的最短等待时间。',
+  interval_seconds: '同一认证两次常规空闲检测之间的最短间隔。',
+  mismatch_recheck_seconds: '使用确认时的模型与预期指纹复检。默认两天。',
+  gateway_recheck_seconds: '连续遇到 502 或 503 并用完短重试后，定期复检同一业务模型。默认一小时，有 CPA 冷却时需等冷却结束。',
+  timeout_seconds: '每道随机数挑战的最长结果等待时间。',
+  jitter_seconds: '空闲检测和短重试随机增加的最多秒数，用于错开请求。',
+  dedupe_seconds: '窗口内，同一认证的同类重复上游事件只计数一次。',
+  trigger_count: '去重后达到此数量，才隔离认证并创建诊断任务。',
+  http_statuses: '匹配的 HTTP 状态码，填写 JSON 数字数组，例如 [502, 503]。',
+  error_codes: '匹配的上游错误代码，填写 JSON 字符串数组。',
+  error_texts: '匹配上游错误文本中包含的片段，填写 JSON 字符串数组。',
+  min_probability: '三道挑战有效后，识别结果还须达到此概率才会判定一致或不一致。',
+  confirm_rounds: '同一模型和同一版参考库连续判定不一致达到此轮数，才确认隔离。',
+  parallel_challenges: '开启时将同一轮的三道随机数挑战同时交给 CPA。默认逐道提交。',
+  max_concurrent: '所有提供商同时运行的最大检测轮数，每轮包含三道挑战。',
+  per_provider: '同一提供商同时运行的最大检测轮数。',
+  retry_seconds: '首次短重试的退避基础间隔。',
+  max_retry_seconds: '指数退避的上限，随机抖动另计。',
+  max_retries: '首次检测之后允许的短重试次数。等候 CPA 冷却不计入。',
+  overload_limit: '全局或提供商达到连续过载轮数后，暂停该范围的检测。',
+  overload_pause_seconds: '触发过载保护后，新检测暂停的时长。',
+  prefer_failed_model: '业务触发检测时，优先使用已有预期指纹映射的故障模型。',
+  expected_models: '填写以请求模型为键、参考库模型 ID 为值的 JSON 对象。',
+  providers: '填写以提供商名称为键的 JSON 对象。单认证设置有更高优先级。',
+};
+let fieldSequence = 0;
 function field(container, name, spec, value, inherit = false) {
   const [label, type] = spec;
-  const wrapper = element('label', label);
+  const id = 'setting-' + ++fieldSequence;
+  const tipId = id + '-help';
+  const wrapper = element('div', null, { class: 'field' });
+  const title = element('div', null, { class: 'field-title' });
+  const tip = element('button', null, {
+    class: 'field-tip ghost', type: 'button', 'aria-label': label + '说明', 'aria-describedby': tipId,
+  });
+  tip.append(icon('info'));
+  const description = name === 'enabled' && container.id === 'auth-fields'
+    ? '控制该认证是否参与检测。全局开启时才有效。' : settingHelp[name];
+  title.append(element('label', label, { for: id }), tip,
+    element('span', description, { class: 'field-tooltip', role: 'tooltip', id: tipId }));
   let input;
   if (type === 'bool') {
     input = element('select');
@@ -670,7 +703,7 @@ function field(container, name, spec, value, inherit = false) {
   } else if (type === 'json') {
     input = element('textarea', null, { rows: 4, spellcheck: 'false' });
     input.value = JSON.stringify(value ?? {}, null, 2);
-    wrapper.className = 'wide';
+    wrapper.classList.add('wide');
   } else {
     input = element('input', null, { type: type === 'number' ? 'number' : 'text' });
     input.value = value ?? '';
@@ -681,14 +714,22 @@ function field(container, name, spec, value, inherit = false) {
     }
     if (inherit) input.placeholder = '留空继承';
   }
+  input.id = id;
   input.name = name;
   input.dataset.type = type;
-  wrapper.append(input);
+  input.setAttribute('aria-describedby', tipId);
+  tip.onkeydown = event => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    input.focus({ preventScroll: true });
+  };
+  wrapper.append(title, input);
   container.append(wrapper);
 }
 function collect(container, inherit = false) {
   const result = {};
-  for (const input of container.querySelectorAll(':scope > label [name]')) {
+  for (const input of container.querySelectorAll(':scope > .field > [name]')) {
     const { name, value } = input;
     if (inherit && !value.trim()) continue;
     try {
@@ -699,7 +740,7 @@ function collect(container, inherit = false) {
         default: result[name] = value.trim();
       }
     } catch {
-      throw new Error(input.closest('label').childNodes[0].textContent + '的 JSON 格式有误。');
+      throw new Error(input.labels[0].textContent + '的 JSON 格式有误。');
     }
   }
   return result;
@@ -751,21 +792,17 @@ byId('reload-settings').onclick = async () => {
   if (!view || busy) return;
   if (settingsDirty() && !await confirmAction('重新载入', '放弃未保存的更改并载入当前配置？')) return;
   if (!view || busy) return;
-  const requestedSession = session;
   busy = true;
   syncWriteControls();
   try {
-    await refreshLatest(requestedSession);
-    if (requestedSession !== session) return;
+    await refreshLatest();
     drawSettings();
     message('已重新载入设置');
   } catch (error) {
-    if (requestedSession === session) formError('settings-error', error.message);
+    formError('settings-error', error.message);
   } finally {
-    if (requestedSession === session) {
-      busy = false;
-      syncWriteControls();
-    }
+    busy = false;
+    syncWriteControls();
   }
 };
 byId('settings-form').onsubmit = event => {
